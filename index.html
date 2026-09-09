@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ÆTHER — a backend with no where</title>
+  <meta name="description" content="A backend that is not a place. No servers, no API, no company. A join-semilattice of signed CRDT replicas living in browsers. Any website can speak it." />
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="site.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#top">
+      <svg class="seal" viewBox="0 0 84 84" aria-hidden="true">
+        <circle cx="42" cy="42" r="40" fill="none" stroke="#d08a4c" stroke-width="1.2"/>
+        <circle cx="42" cy="42" r="32" fill="none" stroke="#f1e6d0" stroke-opacity=".35" stroke-width=".8"/>
+        <g stroke="#ddf35a" stroke-width=".8" fill="none">
+          <polygon points="42,16 66,33 57,62 27,62 18,33"/>
+          <line x1="42" y1="16" x2="57" y2="62"/>
+          <line x1="66" y1="33" x2="27" y2="62"/>
+          <line x1="57" y1="62" x2="18" y2="33"/>
+          <line x1="27" y1="62" x2="66" y2="33"/>
+          <line x1="18" y1="33" x2="42" y2="16"/>
+        </g>
+        <text x="42" y="48" text-anchor="middle" font-family="Newsreader, serif" font-size="18" fill="#f1e6d0">Æ</text>
+      </svg>
+      <div>
+        <em>Æther</em><br />
+        protocol 0.1 · unhosted
+      </div>
+    </a>
+    <nav>
+      <a href="#instrument">instrument</a>
+      <a href="#live">live</a>
+      <a href="#theorem">theorem</a>
+      <a href="#hitch">hitch a site</a>
+      <a href="elsewhere.html">elsewhere →</a>
+    </nav>
+  </header>
+
+  <nav class="side-index" aria-label="plates">
+    <a href="#top">I</a>
+    <a href="#instrument">II</a>
+    <a href="#live">III</a>
+    <a href="#theorem">IV</a>
+    <a href="#hitch">V</a>
+    <a href="#protocol">VI</a>
+    <a href="#colophon">VII</a>
+  </nav>
+
+  <main id="top">
+    <section class="plate hero">
+      <div class="hero-body">
+        <div>
+          <p class="kicker">Plate I · a hole in the client/server lie</p>
+          <h1 class="mega">
+            <span class="no">there is</span>
+            NO<br />
+            <strike class="server">SERVER</strike>
+          </h1>
+          <p class="lede">
+            This page has no backend. The backend is <em>the page</em> —
+            and every other page, on any origin, currently holding the same
+            mathematical object.
+          </p>
+        </div>
+        <aside class="hero-aside">
+          <strong>What the network tab will show</strong>
+          static html, css, js<br />
+          wss → public bittorrent trackers<br />
+          stun → ice candidates<br />
+          webrtc datachannels (encrypted)<br />
+          <span class="eq">Ω = ⊔&nbsp;{ replica(p) | p ∈ swarm }</span>
+          <span class="small">
+            Trackers matchmake. They never see a key, a value, or a signature.
+            There is no Æther company, no origin database, no bill.
+            Capability = the namespace string.
+          </span>
+        </aside>
+      </div>
+    </section>
+
+    <section class="plate" id="instrument">
+      <p class="plate-num">Plate II · the instrument</p>
+      <h2>A sky of facts.</h2>
+      <p class="sub">
+        Every key in the lattice is projected onto a sphere from its hash.
+        Peers are the brighter nodes. When someone writes, a meteor.
+        This is not a metaphor for a server. This <em>is</em> the store.
+      </p>
+      <div class="field-wrap">
+        <canvas id="field"></canvas>
+        <div class="field-caption">
+          <span>content-addressed celestial sphere</span>
+          <span>merkle <b id="merkle">∅</b> · keys <b id="keyn">0</b> · peers <b id="peern">0</b></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="plate" id="live">
+      <p class="plate-num">Plate III · instruments that should not work</p>
+      <h2>Touch the void.</h2>
+      <p class="sub">
+        Open this in two tabs. Open <a href="elsewhere.html">elsewhere</a> —
+        a completely different website. Same namespace, same lattice.
+        Increment. Whisper. Write a key. No API key was issued because there
+        is no API.
+      </p>
+
+      <div class="grid-2">
+        <div class="card pulse-box">
+          <div class="lbl">The pulse · PN-counter · actor-wise</div>
+          <p id="pulse">0</p>
+          <p class="pulse-meta">sum of every replica’s increments · not a server counter</p>
+          <button class="hit" id="hit">strike the drum</button>
+        </div>
+        <div class="card">
+          <div class="lbl">The whisper · append-only log</div>
+          <p class="muted" style="margin-top:0">Messages exist as signed events. They survive in every browser that has seen them. They appear on every site hitched to genesis.</p>
+          <div class="whispers" id="whispers"></div>
+          <div class="row" style="margin-top:12px">
+            <input id="whisper-in" type="text" maxlength="240" placeholder="leave a note in the mesh…" />
+            <button class="hit ghost" id="whisper-btn">send</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-2" style="margin-top:28px">
+        <div class="card">
+          <div class="lbl">The ledger · LWW-map</div>
+          <div class="row" style="margin-bottom:12px">
+            <input id="k-in" type="text" placeholder="key  e.g. ships/ncc1701" />
+            <input id="v-in" type="text" placeholder='value  {"captain":"kirk"}' />
+            <button class="hit ghost" id="set-btn">set</button>
+          </div>
+          <div style="overflow:auto; max-height:280px">
+            <table class="ledger-table">
+              <thead><tr><th>key</th><th>value</th><th>actor</th></tr></thead>
+              <tbody id="ledger"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card">
+          <div class="lbl">The console · talk to Ω</div>
+          <div class="console">
+            <div class="console-out" id="cout"></div>
+            <div class="console-in">
+              <span>æ›</span>
+              <input id="cin" type="text" autocomplete="off" spellcheck="false" placeholder="help" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="plate" id="theorem">
+      <p class="plate-num">Plate IV · the reason it cannot disagree with itself</p>
+      <h2>It is a theorem,<br />not a machine.</h2>
+      <p class="sub">
+        State is a last-writer-wins map ordered by a hybrid logical clock
+        and actor id. Merge is the least upper bound of two replicas.
+        Shapiro, Preguiça, Baquero, Zawirski — 2011. We run the algebra
+        in your browser every load. If it fails, the page will say so.
+      </p>
+      <div class="eq-block">
+        A ⊔ B = B ⊔ A &nbsp;&nbsp;(commutative)<br />
+        (A ⊔ B) ⊔ C = A ⊔ (B ⊔ C) &nbsp;&nbsp;(associative)<br />
+        A ⊔ A = A &nbsp;&nbsp;(idempotent)<br />
+        ∴ (S, ⊔) is a join-semilattice, and Ω is unique.
+      </div>
+      <div class="proof" id="proof"></div>
+      <p class="muted">Your replica identity is <code id="who">—</code>. Every mutation is ECDSA P-256 signed. Forged events are dropped. Presence is a TTL on <code>#p/{actor}</code>.</p>
+    </section>
+
+    <section class="plate" id="hitch">
+      <p class="plate-num">Plate V · hitch any website to the lattice</p>
+      <h2>One script.<br />Any origin.</h2>
+      <p class="sub">
+        WebRTC does not care what domain you are on. The namespace is hashed
+        to a 20-byte infohash. Two shops, a game, a blog — if they open the
+        same name, they are the same backend. Knowledge of the name is the
+        capability. Pick an unguessable one.
+      </p>
+      <div class="grid-2">
+        <div>
+          <pre class="snip" id="snip">&lt;script src="<span id="origin">./aether.js</span>"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const db = await Aether.open('my-secret-universe');
+
+  await db.set('user/ada', { year: 1843 });
+  await db.inc('signups', 1);
+  await db.append('audit', { what: 'hello' });
+
+  db.watch('', (key, value) => console.log(key, value));
+
+  db.get('user/ada');
+  db.count('signups');
+  db.tail('audit', 20);
+  db.peers; // living mesh
+&lt;/script&gt;</pre>
+          <p style="margin-top:12px">
+            <button class="copy" id="copy">copy the hitch</button>
+            &nbsp;
+            <a class="elsewhere-link" href="elsewhere.html">open a second website using this backend</a>
+          </p>
+        </div>
+        <div>
+          <h3>API, such as it is</h3>
+          <p class="muted">
+            <code>open(ns)</code> · <code>set/get/del</code> · <code>scan(prefix)</code> ·
+            <code>inc/count</code> · <code>append/tail</code> · <code>watch</code> ·
+            <code>presence</code> · <code>status</code> · <code>onStatus</code>.
+            Counters are actor-registers summed on read. Logs are timestamped
+            keys. Everything else is an LWW register. Persistence is IndexedDB
+            in each replica. When the last browser closes, the last copy sleeps
+            there until it reopens and gossips.
+          </p>
+          <p class="muted">
+            Optional: pass <code>{ passphrase }</code> is not required — secrecy
+            is the namespace. Treat it like a bearer token the size of a poem.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="plate" id="protocol">
+      <p class="plate-num">Plate VI · how we steal a signaling channel from the dead</p>
+      <h2>Hijack, then disappear.</h2>
+      <div class="grid-2 protocol">
+        <div>
+          <ol>
+            <li><strong>Namespace → infohash.</strong> SHA-256 of the capability, truncated to 20 bytes. That is a BitTorrent swarm id that no torrent uses.</li>
+            <li><strong>Announce to public WebTorrent trackers.</strong> They were built to swap video files. We hand them WebRTC offers instead. They introduce strangers. They never see payload.</li>
+            <li><strong>MQTT as a spare matchmaker.</strong> Public brokers carry SDP only. Ciphertext of the lattice never rides there.</li>
+            <li><strong>Same-origin tabs.</strong> BroadcastChannel is an instant local bus, so two tabs are already a cluster before ICE finishes.</li>
+            <li><strong>Gossip.</strong> Each signed event floods the mesh. Missing ids are requested. Merkle of the event set is the checksum of Ω.</li>
+            <li><strong>STUN, not TURN.</strong> No relay of your data through a charity server. Hostile symmetric NAT may fail a direct pair; a third peer still gossips both ways if the graph is connected.</li>
+          </ol>
+        </div>
+        <div>
+          <div class="lbl" style="font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--copper);margin-bottom:8px">live signaling log</div>
+          <div class="log" id="slog"></div>
+          <p class="muted" style="margin-top:14px">
+            This is not “serverless” in the AWS sense. Serverless still rents a machine.
+            This is <em>unhosted</em>. The internet’s leftover public infrastructure is
+            used as a handshake, then abandoned.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="plate" id="colophon">
+      <p class="plate-num">Plate VII · colophon</p>
+      <h2>Nothing to shut down.</h2>
+      <div class="colophon">
+        <p>
+          You cannot DDoS an address that is not an address. You cannot subpoena
+          a company that is a file. You cannot migrate off a vendor, because the
+          vendor is a 20-byte hash. The cost is zero because nobody is selling
+          you cycles. The failure mode is honest: if the mesh dies, the last
+          browser still holds the lattice, and the theorem still holds.
+        </p>
+        <p>
+          Genesis namespace for this exhibition: <code>æther://genesis</code>.
+          It is public on purpose. For anything real, choose a name that cannot
+          be guessed and do not publish it. Æther is a protocol, not a product.
+        </p>
+        <p>
+          <a href="aether.js">aether.js</a>
+          · <a href="elsewhere.html">elsewhere</a>
+          · <a href="README.md">notes</a>
+          · Shapiro et al., <em>Conflict-free Replicated Data Types</em>, 2011
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <div class="ticker" id="ticker">
+    <span>0 servers</span>
+    <span class="dot">·</span>
+    <span>replicas <b id="t-peers">1</b></span>
+    <span class="dot">·</span>
+    <span>merkle <b id="t-merkle">∅</b></span>
+    <span class="dot">·</span>
+    <span>events <b id="t-ev">0</b></span>
+    <span class="dot">·</span>
+    <span>actor <b id="t-actor">—</b></span>
+    <span class="dot">·</span>
+    <span>theorem <b id="t-th">…</b></span>
+  </div>
+
+  <script src="aether.js"></script>
+  <script src="site.js"></script>
+</body>
+</html>
