@@ -17,7 +17,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.6.0';
+  const VERSION = '0.7.0';
   const CHAN = 'aether';
   const MAX_PEERS = 24;
   const CHUNK = 12000;
@@ -247,7 +247,7 @@
     }
     _op(op, key, value, ts, actor) {
       if (!key) return;
-      const fww = key === '#genesis' || key.startsWith('~name/') || key.startsWith('~mail/');
+      const fww = key === '#genesis' || key === '#owner' || key === '#lease' || key.startsWith('~name/') || key.startsWith('~mail/');
       const cur = this.state.get(key);
       if (fww && cur && !cur.del) return;
       if (!cur || ts > cur.ts || (ts === cur.ts && actor > cur.actor)) {
@@ -798,6 +798,9 @@
         keys: [...this.lattice.state.values()].filter((c) => !c.del).length,
         merkle: this.lattice.merkle(),
         servers: 0,
+        locked: this.locked(),
+        writer: this.amWriter(),
+        owner: this._ownerRec() && this._ownerRec().eh,
         encrypted: !!this.aes,
         theorem: 'Ω = ⊔ replicas  (join-semilattice)',
         stats: Object.assign({}, this.stats),
@@ -1321,8 +1324,98 @@
       const cfg = this.get('~cfg/admin');
       return !!(cfg && cfg.actor === actor);
     }
+    _ownerRec() {
+      return this.get('#owner') || this.get('#lease') || null;
+    }
+    _gateWriter(actor) {
+      if (!actor || this.ns === GATE_NS || this.ns === GENESIS_NS) return false;
+      try {
+        if (!api.gate || api.gate.closed) return false;
+        const h = (this.nsHash || '').slice(0, 24);
+        if (!h) return false;
+        const rec = api.gate.get('~writer/' + h + '/' + actor);
+        const own = this._ownerRec();
+        return !!(rec && own && rec.eh === own.eh);
+      } catch (e) {
+        return false;
+      }
+    }
+    _isWriter(actor) {
+      if (!this.meter) return true;
+      const own = this._ownerRec();
+      if (!own) return true;
+      if (actor && own.actor === actor) return true;
+      const w = actor && this.get('#writer/' + actor);
+      if (w && w.eh === own.eh) return true;
+      if (this._gateWriter(actor)) return true;
+      if (this.account && this.account.role === 'admin') return true;
+      return false;
+    }
+    amWriter() {
+      return this._isWriter(this.actor && this.actor.id);
+    }
+    locked() {
+      return !!(this.meter && this._ownerRec());
+    }
+    owner() {
+      return this._ownerRec();
+    }
+    _assertWriter(key) {
+      if (!this.meter) return;
+      const k = String(key || '');
+      if (k.startsWith('#p/') || k === '#genesis') return;
+      const own = this._ownerRec();
+      if (!own) return;
+      if (this.account && (this.account.eh === own.eh || this.account.role === 'admin')) return;
+      throw new Error(
+        'locked to the owner. email in once on this browser — then this connection can write and nobody else can'
+      );
+    }
+    async lockToAccount(ticket) {
+      if (!ticket || !this.meter) return { ok: false };
+      this.bindAccount(ticket);
+      const cur = this._ownerRec();
+      if (cur && cur.eh !== ticket.eh && ticket.role !== 'admin') {
+        this.log('read-only · another inbox owns this lattice');
+        return { ok: false, reason: 'foreign', owner: cur };
+      }
+      if (!this.get('#owner')) {
+        await this.set('#owner', { eh: ticket.eh, actor: this.actor.id, at: Date.now() });
+      }
+      if (!this.get('#lease')) {
+        try {
+          await this.set('#lease', {
+            eh: ticket.eh,
+            plan: ticket.plan,
+            actor: this.actor.id,
+            at: Date.now()
+          });
+        } catch (e) {}
+      }
+      const wk = '#writer/' + this.actor.id;
+      if (!this.get(wk)) await this.set(wk, { eh: ticket.eh, at: Date.now() });
+      this.log('locked to inbox · this connection is verified');
+      this._emitStatus('lock');
+      return { ok: true, owner: this.get('#owner') };
+    }
     _canWrite(key, actor) {
-      if (key.startsWith('#p/') || key.startsWith('#c/') || key.startsWith('#l/') || key.startsWith('#f/')) return true;
+      if (key.startsWith('#p/')) return true;
+      if (this.meter) {
+        const own = this._ownerRec();
+        if (own) {
+          if (key === '#owner') return false;
+          if (key === '#lease') return this._isWriter(actor);
+          if (key.startsWith('#writer/')) {
+            if (this._isWriter(actor)) return true;
+            if (this.account && this.account.eh === own.eh && actor === (this.actor && this.actor.id)) return true;
+            return this._gateWriter(actor);
+          }
+          if (!this._isWriter(actor)) return false;
+        } else if (key === '#owner' || key === '#lease') {
+          return true;
+        }
+      }
+      if (key.startsWith('#c/') || key.startsWith('#l/') || key.startsWith('#f/')) return !this.meter || this._isWriter(actor);
       if (key === '#genesis' || key.startsWith('~name/') || key.startsWith('~actor/')) return true;
       if (key.startsWith('~otp/') || key.startsWith('~sess/')) return true;
       if (key.startsWith('~mail/')) return true;
@@ -1335,6 +1428,16 @@
       }
       if (key.startsWith('~inv/')) {
         if (!this.get(key)) return true;
+        return this._adminActor(actor);
+      }
+      if (key.startsWith('~writer/')) {
+        const rest = key.slice(8);
+        const i = rest.indexOf('/');
+        if (i < 1) return false;
+        const rec = this.get('~ns/' + rest.slice(0, i));
+        if (!rec) return false;
+        const mail = this.get('~mail/' + rec.eh);
+        if (mail && mail.actor === actor) return true;
         return this._adminActor(actor);
       }
       if (key.startsWith('~ban/') || key.startsWith('~cfg/') || key.startsWith('~ns/')) {
@@ -1483,7 +1586,7 @@
       const plan = this._plan();
       if (plan.writes === Infinity && plan.keys === Infinity) return;
       const k = String(key || '');
-      if (k.startsWith('#p/') || k.startsWith('#c/') || k === '#genesis' || k === '#lease') return;
+      if (k.startsWith('#p/') || k.startsWith('#c/') || k === '#genesis' || k === '#lease' || k === '#owner' || k.startsWith('#writer/')) return;
       if (this.writesToday() >= plan.writes)
         throw new Error(
           'Æther limit: ' +
@@ -1505,6 +1608,7 @@
       if (!this.ready && op !== 'set') {
         /* genesis during open */
       }
+      this._assertWriter(key);
       this.checkQuota(op, key);
       if (key && !this._canWrite(String(key), this.actor.id)) throw new Error('write denied by rules: ' + key);
       if (op === 'batch' && Array.isArray(value)) {
@@ -2427,6 +2531,26 @@
     if (!cur) await gate.set(key, { eh: ticket.eh, ns: ns, actor: gate.actor.id, at: Date.now() });
     return gate.get(key);
   }
+  async function registerWriter(ns, actor, ticket) {
+    ticket = ticket || loadTicket();
+    if (!ticket || !actor) return null;
+    const gate = await openGate();
+    const nsHash = (await sha256('aether:ns:' + ns)).slice(0, 24);
+    const rec = gate.get('~ns/' + nsHash);
+    if (!rec || (rec.eh !== ticket.eh && ticket.role !== 'admin')) return null;
+    const key = '~writer/' + nsHash + '/' + actor;
+    if (!gate.get(key)) await gate.set(key, { eh: ticket.eh, actor: actor, ns: ns, at: Date.now() });
+    return gate.get(key);
+  }
+  async function sealNamespace(db, ticket) {
+    ticket = ticket || loadTicket();
+    if (!db || !ticket) return null;
+    if (db.ns === GATE_NS || db.ns === GENESIS_NS) return null;
+    const lease = await claimNamespace(db.ns, ticket);
+    await registerWriter(db.ns, db.actor && db.actor.id, ticket);
+    if (db.lockToAccount) await db.lockToAccount(ticket);
+    return lease;
+  }
   async function ownedNamespaces() {
     const t = loadTicket();
     if (!t) return [];
@@ -2565,6 +2689,8 @@
       checkout: checkout,
       markPaid: markPaid,
       claim: claimNamespace,
+      seal: sealNamespace,
+      writer: registerWriter,
       hash: hashEmail,
       open: openGate,
       owned: ownedNamespaces,
@@ -2607,6 +2733,11 @@
     if (!o.ticket) o.ticket = loadTicket();
     if (api.db && !api.db.closed && api.db.ns === parsed.ns) {
       if (o.ticket) api.db.bindAccount(o.ticket);
+      if (o.ticket && o.claim !== false && parsed.ns !== GATE_NS && parsed.ns !== GENESIS_NS) {
+        sealNamespace(api.db, o.ticket).catch(function (e) {
+          api.db.log('lock ' + (e && e.message ? e.message : e));
+        });
+      }
       return Promise.resolve(api.db);
     }
     if (api.db && api.db !== api.gate && !api.db.closed) {
@@ -2627,8 +2758,8 @@
         mount(document);
       } catch (e) {}
       if (o.ticket && o.claim !== false && parsed.ns !== GATE_NS && parsed.ns !== GENESIS_NS) {
-        claimNamespace(parsed.ns, o.ticket).catch(function (e) {
-          db.log('claim ' + (e && e.message ? e.message : e));
+        sealNamespace(db, o.ticket).catch(function (e) {
+          db.log('lock ' + (e && e.message ? e.message : e));
         });
       }
       return db;

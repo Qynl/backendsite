@@ -12,9 +12,9 @@ npm run dev
 
 Open the preview (Vite binds `0.0.0.0:5173`). Then:
 
-1. **Email in** (`#/in`) — type an inbox. A letter is sent (public FormSubmit hop, plus a mailto you can fire yourself). Open the magic link `/?otp=&eh=#/in` or type the six-digit code. There is no password field. The gate waits for the lattice to meet itself, so a code typed on another device still works.
-2. **Connect** (`#/connect`) — generate a secret. Copy the HTML tag, Convex JS, React hooks, Vite, Node keeper, or download a whole HTML room. Share the room URL.
-3. **Room** (`#/room?ns=…`) — this website hitches that namespace. Messages, presence, pulse, capsules. That *is* the backend.
+1. **Email in once** (`#/in`) — type an inbox. A letter is sent (public FormSubmit hop, plus a mailto you can fire yourself). Open the magic link `/?otp=&eh=#/in` or type the six-digit code. There is no password field. That proof lives in this browser. We do not ask again on every write.
+2. **Connect** (`#/connect`) — generate a secret. Copy the HTML tag, Convex JS, React hooks, Vite, Node keeper, or download a whole HTML room. Hitch **locks** the lattice to that inbox and registers this connection as a writer. Nobody else can write.
+3. **Room** (`#/room?ns=…`) — this website hitches that namespace. Messages, presence, pulse, capsules. That *is* the backend. A new device emails in once, then it writes too.
 4. **Docs** (`#/docs`) — the dialect on the same origin that serves `/aether.js`.
 
 The same origin serves `/aether.js` (and `/react.js`) so a foreign site can `<script src="https://THIS-HOST/aether.js" data-aether="ae-…">`. That host is not the database.
@@ -271,7 +271,7 @@ node node.js keep ae-YOUR-SECRET ./capsule.json
 1. Open **Email in** on this website (`#/in`), or the older [gate.html](gate.html).
 2. Type your email. A **letter** is sent through a public mail hop (FormSubmit — a matchmaker, like the trackers). First time you may have to click their confirmation mail, then send again. If the hop refuses, use **open mail app** (mailto) — the code is also on the page.
 3. Open the magic link `/?otp=…&eh=…#/in` (or type the 6-digit code). That proves the inbox. A ticket is stored in `localStorage`. Pending logins live in `sessionStorage` so a code-only prove still works after a refresh.
-4. Every `Aether.hitch` on this browser attaches the ticket. Honest replicas meter writes/keys/namespaces against the plan.
+4. Every `Aether.hitch` on this browser attaches the ticket, **claims** the namespace, and **locks** it: `#owner` plus this replica on the writer roster. Honest replicas drop everyone else. Later writes do not re-prove email — the ticket is enough. A new browser emails in once, then it is added as a writer. `Aether.account.owned()` lists them. `Aether.account.seal(db)` is the explicit lock if you hitch by hand.
 
 There is no password field anywhere. There never will be.
 

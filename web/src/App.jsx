@@ -62,6 +62,11 @@ function Provider({ children }) {
     }
   }, []);
 
+  useEffect(() => {
+    if (!db || !ticket || !Aether.account.seal) return;
+    Aether.account.seal(db, ticket).then(() => setStatus(db.status())).catch(() => {});
+  }, [db, ticket]);
+
   const value = useMemo(
     () => ({
       Aether,
@@ -139,6 +144,7 @@ function Top() {
         <Link to="account">{ticket ? ticket.plan : 'account'}</Link>
         {ticket && ticket.role === 'admin' && <Link to="admin">admin</Link>}
         {ticket && <span className="chip">{ticket.plan}</span>}
+        {status && status.locked && <span className="chip">{status.writer ? 'locked · you' : 'locked'}</span>}
         {status && <span className="chip">{status.peerCount || 0} peers</span>}
       </nav>
     </header>
@@ -286,12 +292,12 @@ function Home() {
 
       <div className="grid" style={{ marginTop: 48 }}>
         <div className="card">
-          <div className="lbl">1. email</div>
-          <p>No password. A letter with a link and a code. That inbox is the account.</p>
+          <div className="lbl">1. email once</div>
+          <p>No password. One letter proves the inbox. After that this browser is verified — we do not ask again.</p>
         </div>
         <div className="card">
-          <div className="lbl">2. hitch</div>
-          <p>Paste one tag on any site. Same name = same backend. React, Vite, Node, HTML.</p>
+          <div className="lbl">2. hitch · lock</div>
+          <p>Paste one tag. The lattice locks to that inbox. Nobody else can write. You just write.</p>
         </div>
         <div className="card">
           <div className="lbl">3. live</div>
@@ -461,7 +467,7 @@ function Connect() {
         </li>
         <li>
           <b>Open the live room</b>
-          This website hitches the same namespace — Æther is its own backend. Share the room URL with another device.
+          This website hitches and locks the namespace. Other devices need your email once; then they write too. Strangers cannot.
           <div className="row" style={{ marginTop: 10 }}>
             <button
               className="hit"
@@ -618,7 +624,8 @@ function Gate() {
       <p className="kicker">no passwords · a letter is the key</p>
       <h2>Your email is the account.</h2>
       <p className="lede">
-        We send a link and a six-digit code. Open either. Admin is <code>{Aether.founder}</code> and is infinite.
+        We send a link and a six-digit code. Open either. That is the only time we ask. After that this browser is the
+        owner of whatever it hitches. Admin is <code>{Aether.founder}</code> and is infinite.
       </p>
       <form onSubmit={send} className="row" style={{ marginBottom: 18 }}>
         <input
@@ -743,8 +750,21 @@ function Room() {
       <h2>Say something into the lattice.</h2>
       <p className="muted">
         ns <code>{ns || '—'}</code>
-        {ticket ? ' · ' + ticket.plan : ' · anon'} · open the room URL on another device.
+        {ticket ? ' · ' + ticket.plan : ' · anon'}
+        {status && status.locked ? (status.writer ? ' · locked to you' : ' · locked · read only') : ''}
       </p>
+      {status && status.locked && !status.writer && !ticket && (
+        <p className="muted">
+          This lattice has an owner. <a href="#/in">Email in once</a> on this browser — then it writes without asking
+          again. Nobody else can.
+        </p>
+      )}
+      {status && status.locked && !status.writer && ticket && (
+        <p className="err">This inbox does not own this lattice. You can read. You cannot write.</p>
+      )}
+      {status && status.locked && status.writer && (
+        <p className="ok">Owner verified on this connection. Writes just work. Strangers are dropped.</p>
+      )}
       <div className="row" style={{ margin: '8px 0 16px' }}>
         {share && <Copy btn={share} label="copy room URL" />}
         {ns && <Copy btn={Aether.link(ns, pass)} label="copy aether://" />}
@@ -804,11 +824,12 @@ function Room() {
             <input
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="into the mesh…"
+              placeholder={status && status.locked && !status.writer ? 'read only until you email in once' : 'into the mesh…'}
               maxLength={400}
               style={{ flex: 1 }}
+              disabled={!!(status && status.locked && !status.writer)}
             />
-            <button className="hit" disabled={!!busy || !db}>
+            <button className="hit" disabled={!!busy || !db || (status && status.locked && !status.writer)}>
               send
             </button>
           </form>
@@ -844,7 +865,7 @@ function Room() {
           <button
             className="ghost"
             type="button"
-            disabled={!db}
+            disabled={!db || (status && status.locked && !status.writer)}
             onClick={async () => {
               try {
                 await db.inc('pulse', 1);
@@ -1253,12 +1274,16 @@ await db.run('messages.send', { body: 'hello' });`}</pre>
       <pre className="snip">{`import { AetherProvider, useQuery, useMutation } from './react.js'
 <AetherProvider ns="ae-YOUR-SECRET"><App /></AetherProvider>`}</pre>
 
-      <h3>5. Email in. No passwords.</h3>
+      <h3>5. Email in once. Then this connection owns it.</h3>
       <pre className="snip">{`await Aether.account.send('you@somewhere')
 await Aether.account.prove({ code: '123456' })
-Aether.hitch(ns) // ticket rides along, quotas follow the inbox`}</pre>
+await Aether.hitch(ns)
+// first hitch locks the lattice to that inbox and registers this browser as a writer.
+// later writes do not re-check email. other actors are dropped.`}</pre>
       <p className="muted">
-        Admin <code>{Aether.founder}</code> is infinite. Spark is free. Braid 9€ / loom 29€.
+        One letter per browser. The ticket lives in <code>localStorage</code>. Hitch seals the namespace. Strangers with
+        the name can read if they know it; they cannot write. Admin <code>{Aether.founder}</code> is infinite. Spark is
+        free. Braid 9€ / loom 29€.
       </p>
 
       <h3>6. Prove there is no origin API</h3>
