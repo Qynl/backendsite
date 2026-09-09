@@ -32,7 +32,7 @@
       </svg>
       <div>
         <em>Æther</em><br />
-        protocol 0.1 · unhosted
+        protocol 0.2 · unhosted
       </div>
     </a>
     <nav>
@@ -180,71 +180,56 @@
     </section>
 
     <section class="plate" id="hitch">
-      <p class="plate-num">Plate V · hitch any website — exact steps</p>
-      <h2>One script.<br />Any origin.</h2>
+      <p class="plate-num">Plate V · hitch any website — 20 seconds</p>
+      <h2>Paste one tag.<br />That’s the backend.</h2>
       <p class="sub">
-        This is the whole vendor relationship. There is no dashboard.
-        Do these steps on a shop, a game, a blog — they become one backend
-        if they open the same name.
+        Generate a secret. Copy the tag. Paste it on every site that should share data.
+        No npm, no account, no <code>async</code> required. <code>window.db</code> appears by itself.
       </p>
 
-      <ol class="steps">
-        <li>
-          <b>Put <code>aether.js</code> on the site</b>
-          Copy the file next to your HTML, or hotlink the URL below. CORS is already <code>*</code>. It is a static file, not an API.
-        </li>
-        <li>
-          <b>Invent a secret namespace</b>
-          Long, random, unpublished. The string is the database URL, the API key, and the lock. Optional: add <code>passphrase</code> so even swarm lurkers see only AES-GCM ciphertext.
-        </li>
-        <li>
-          <b>Open it instead of Firebase</b>
-          <code>const db = await Aether.open('your-secret')</code>. That is <code>initializeApp</code> + <code>getFirestore</code> + auth, in one call.
-        </li>
-        <li>
-          <b>Read and write</b>
-          Collections <code>db.col('users').doc(id).set(data)</code>, live queries <code>.where().on()</code>, counters, files, rules, capsules. Full map is in <a href="README.md">README.md</a>.
-        </li>
-        <li>
-          <b>Hitch the next website</b>
-          Different origin, same <code>aether.js</code>, <em>same namespace string</em>. WebRTC does not care what domain you are on. Proof: <a href="elsewhere.html">elsewhere</a>.
-        </li>
-        <li>
-          <b>Check the network tab</b>
-          Static files, torrent trackers, MQTT, STUN. No fetch to a vendor of yours. If that list is all you see, you did it.
-        </li>
-      </ol>
+      <div class="workshop">
+        <div class="ws-row">
+          <label>namespace (the whole backend)
+            <input id="ns-in" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <button class="hit ghost" id="ns-gen" type="button">generate</button>
+        </div>
+        <div class="ws-row">
+          <label>optional passphrase (encrypts values)
+            <input id="pass-in" type="text" autocomplete="off" spellcheck="false" placeholder="leave empty unless you need a second lock" />
+          </label>
+        </div>
+        <p class="share">share this string with your other sites: <code id="share-link"></code>
+          <button class="copy" id="copy-link" type="button">copy link</button>
+        </p>
 
-      <div class="grid-2">
-        <div>
-          <pre class="snip" id="snip"></pre>
-          <span id="origin" hidden>./aether.js</span>
-          <p style="margin-top:12px">
-            <button class="copy" id="copy">copy the hitch</button>
-            &nbsp;
-            <a class="elsewhere-link" href="elsewhere.html">open a second website using this backend</a>
-          </p>
+        <div class="tabs" role="tablist">
+          <button class="tab on" data-tab="tag" type="button">1. one tag</button>
+          <button class="tab" data-tab="js" type="button">2. javascript</button>
+          <button class="tab" data-tab="html" type="button">3. whole page</button>
         </div>
-        <div>
-          <h3>Versus a rented backend</h3>
-          <table class="cmp">
-            <thead><tr><th></th><th>them</th><th>æther</th></tr></thead>
-            <tbody>
-              <tr><td>docs / queries / live</td><td>yes</td><td>yes</td></tr>
-              <tr><td>auth</td><td>their users table</td><td>your keypair</td></tr>
-              <tr><td>files</td><td>bucket</td><td>content-addressed</td></tr>
-              <tr><td>rules</td><td>server</td><td>every replica</td></tr>
-              <tr><td>offline</td><td>cache</td><td>the replica is the db</td></tr>
-              <tr><td>backup</td><td>export button</td><td>capsule + MQTT keep</td></tr>
-              <tr><td>bill / kill switch</td><td>yes</td><td>nothing to invoice</td></tr>
-            </tbody>
-          </table>
-          <p class="muted" style="margin-top:16px">
-            <button class="copy" id="capsule-out">download capsule</button>
-            <label class="copy" style="display:inline-block;margin-left:8px">restore capsule<input id="capsule-in" type="file" accept="application/json" hidden /></label>
-          </p>
-        </div>
+        <pre class="snip" id="snip-tag"></pre>
+        <pre class="snip" id="snip-js" hidden></pre>
+        <pre class="snip" id="snip-html" hidden></pre>
+        <span id="origin" hidden>./aether.js</span>
+        <p class="ws-actions">
+          <button class="hit" id="copy" type="button">copy</button>
+          <button class="copy" id="dl-html" type="button">download html</button>
+          <a class="elsewhere-link" id="test-hitch" href="hitch.html" target="_blank" rel="noopener">open a test site with this backend</a>
+        </p>
+        <p class="muted">Site two: paste the same tag (or the same <code>aether://…</code> string into <code>Aether.hitch</code>). Proof: <a href="elsewhere.html">elsewhere</a> already shares genesis with this page.</p>
       </div>
+
+      <h3 style="margin-top:48px">After it is hitched</h3>
+      <pre class="snip">db.set('hello', { from: location.host });
+db.get('hello');
+db.col('users').doc('ada').set({ name: 'Ada' });
+db.watch('', (key, value) =&gt; console.log(key, value));</pre>
+      <p class="muted">
+        <button class="copy" id="capsule-out">download capsule</button>
+        <label class="copy" style="display:inline-block;margin-left:8px">restore capsule<input id="capsule-in" type="file" accept="application/json" hidden /></label>
+        · full API in <a href="README.md">README.md</a>
+      </p>
     </section>
 
     <section class="plate" id="protocol">

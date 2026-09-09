@@ -14,62 +14,65 @@ Capability = the namespace string. Any website that opens the same name **is the
 
 ---
 
-## Connect any website — exact steps
+## Connect any website — the easy way
 
-### 1. Get `aether.js`
+**Easiest: generate a secret on the exhibition page (Plate V), copy the tag, paste it into every site.**
 
-It is one file. No npm. No build.
+That tag is the whole backend.
 
-- Copy `aether.js` next to your HTML, **or**
-- Hotlink it from wherever this exhibition is hosted (CORS is `*`).
+### 1. One HTML tag (no JavaScript required)
+
+```html
+<script src="https://YOUR-HOST/aether.js" data-aether="ae-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx"></script>
+```
+
+When the script loads it opens the namespace by itself.
+
+- `window.db` is the backend
+- `Aether.db` is the same object
+- `document.addEventListener('aether-ready', e => { const db = e.detail })` if you want a callback
+- `data-pass="…"` optional AES passphrase
+- `data-as="backend"` if you want `window.backend` instead of `window.db`
+
+`YOUR-HOST` is wherever `aether.js` is served as a **static file** (this preview, GitHub Pages, your own origin, a USB stick). CORS is already `*`. That host is not the database.
+
+### 2. Or one function
 
 ```html
 <script src="https://YOUR-HOST/aether.js"></script>
-```
-
-`YOUR-HOST` is the origin serving this repo (GitHub Pages, this preview, your CDN, a USB stick). It only serves a static file. It is not the backend.
-
-### 2. Invent a namespace
-
-The name **is** the API key, the database URL, and the access control root.
-
-```
-good:  acme-notes-9f3c-k7q2-never-publish-this
-bad:   test, genesis, my-app
-```
-
-Anyone who knows the string can join the swarm. Treat it like a password. Do not put it in a public repo if the data is private.
-
-Optional second lock: a passphrase encrypts every value with AES-GCM. Trackers still group by the name; lurkers without the passphrase only see ciphertext.
-
-### 3. Open the backend (this replaces `initializeApp` + `getFirestore`)
-
-```html
-<script src="./aether.js"></script>
-<script type="module">
-  const db = await Aether.open('acme-notes-9f3c-k7q2-never-publish-this', {
-    // optional:
-    passphrase: 'second-secret',
-    rules: {
-      '*': { read: true, write: true },
-      'users/:id': { read: true, write: 'owner' },
-      'private/*': { read: true, write: 'owner' }
-    }
+<script>
+  Aether.hitch('ae-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx').then(db => {
+    db.set('hello', { from: location.host });
   });
 </script>
 ```
 
-Classic scripts work too: wrap the `await` in an `async` IIFE.
+`Aether.connect` and `Aether.open` do the same thing. A connection string also works:
 
-```html
-<script src="./aether.js"></script>
-<script>
-  (async () => {
-    const db = await Aether.open('acme-notes-9f3c-k7q2-never-publish-this');
-    window.db = db;
-  })();
-</script>
+```js
+Aether.hitch('aether://ae-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx#optional-pass')
 ```
+
+Generate a secret with `Aether.secret()`.
+
+### 3. Hitch a second website
+
+Paste **the same tag** (same `data-aether` value) on the other origin. That is the entire sync setup. WebRTC does not care which domain you are on.
+
+On this repo: `index.html`, `elsewhere.html`, and `hitch.html?ns=YOUR-SECRET` can all share one lattice.
+
+### 4. Invent a namespace (if you are not using the generator)
+
+The name **is** the API key, the database URL, and the lock.
+
+```
+good:  ae-9f3c2a10-k7q2b8c1-never-publish
+bad:   test, genesis, my-app
+```
+
+Anyone who knows the string can join the swarm. Do not commit it if the data is private.
+
+Optional second lock: `data-pass` / `{ passphrase }` encrypts every value with AES-GCM. Trackers still group by the name; lurkers without the passphrase only see ciphertext.
 
 ### 4. Use it like any backend
 
@@ -165,25 +168,6 @@ await db.waitSync(4000);                     // wait for mesh / keeper
 ```
 
 Keepers: every ~40s an encrypted-or-plain gzip snapshot is retained on public MQTT if it fits (~180KB). A brand-new browser that knows the namespace hydrates from that retain, then from peers.
-
-### 5. Hitch a *second* website to the same backend
-
-On a totally different origin (your shop, your game, your blog):
-
-```html
-<script src="https://YOUR-HOST/aether.js"></script>
-<script>
-  (async () => {
-    const db = await Aether.open('acme-notes-9f3c-k7q2-never-publish-this');
-    // same users, same counters, same files
-    console.log(db.col('users').get());
-  })();
-</script>
-```
-
-WebRTC does not care about origin. Same name → same infohash → same swarm → same Ω.
-
-Proof in this repo: `index.html` (the void) and `elsewhere.html` (a paper journal) share `æther://genesis`.
 
 ### 6. Verify it is not talking to “your server”
 

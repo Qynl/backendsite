@@ -21,24 +21,80 @@
 
   const origin = location.origin + location.pathname.replace(/[^/]*$/, '') + 'aether.js';
   if ($('origin')) $('origin').textContent = origin;
-  $('snip').textContent = `<script src="${origin}"></script>
+
+  function currentTab() {
+    const on = document.querySelector('.tab.on');
+    return (on && on.getAttribute('data-tab')) || 'tag';
+  }
+  function paintHitch() {
+    const ns = ($('ns-in') && $('ns-in').value.trim()) || Aether.secret();
+    const pass = ($('pass-in') && $('pass-in').value.trim()) || '';
+    if ($('share-link')) $('share-link').textContent = Aether.link(ns, pass);
+    if ($('snip-tag'))
+      $('snip-tag').textContent =
+        Aether.snippet(origin, ns, { passphrase: pass }) +
+        '\n<!-- window.db is ready. listen: document.addEventListener(\'aether-ready\', e => e.detail) -->';
+    if ($('snip-js'))
+      $('snip-js').textContent = `<script src="${origin}"></script>
 <script>
-(async () => {
-  const db = await Aether.open('replace-with-a-long-secret', {
-    passphrase: 'optional-second-lock',
-    rules: { '*': { read: true, write: true }, 'users/:id': { write: 'owner' } }
+  Aether.hitch('${ns}'${pass ? `, { passphrase: '${pass}' }` : ''}).then(db => {
+    window.db = db;
+    db.set('hello', { from: location.host });
+    db.watch('', (k, v) => console.log(k, v));
   });
-
-  await db.col('users').doc('ada').set({ name: 'Ada', year: 1843 });
-  db.col('users').where('year', '>=', 1800).on(docs => console.log(docs));
-
-  await db.inc('signups', 1);
-  await db.files.put(new Blob(['hello'], { type: 'text/plain' }));
-  await db.auth.claim('ada');
-
-  const capsule = db.exportCapsule(); // backup the whole lattice
-})();
 </script>`;
+    if ($('snip-html')) $('snip-html').textContent = Aether.page(origin, ns, { passphrase: pass });
+    const test = $('test-hitch');
+    if (test) {
+      const u = new URL('hitch.html', location.href);
+      u.searchParams.set('ns', ns);
+      if (pass) u.searchParams.set('p', pass);
+      test.href = u.href;
+    }
+  }
+  function visibleSnip() {
+    const t = currentTab();
+    if (t === 'js') return $('snip-js');
+    if (t === 'html') return $('snip-html');
+    return $('snip-tag');
+  }
+  if ($('ns-in') && !$('ns-in').value) $('ns-in').value = Aether.secret();
+  paintHitch();
+  if ($('ns-in')) $('ns-in').addEventListener('input', paintHitch);
+  if ($('pass-in')) $('pass-in').addEventListener('input', paintHitch);
+  if ($('ns-gen'))
+    $('ns-gen').addEventListener('click', () => {
+      $('ns-in').value = Aether.secret();
+      paintHitch();
+    });
+  document.querySelectorAll('.tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b === btn));
+      const t = btn.getAttribute('data-tab');
+      ['tag', 'js', 'html'].forEach((id) => {
+        const el = $('snip-' + id);
+        if (el) el.hidden = id !== t;
+      });
+    });
+  });
+  if ($('copy-link'))
+    $('copy-link').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText($('share-link').textContent);
+        $('copy-link').textContent = 'copied';
+        setTimeout(() => ($('copy-link').textContent = 'copy link'), 1200);
+      } catch {}
+    });
+  if ($('dl-html'))
+    $('dl-html').addEventListener('click', () => {
+      const ns = $('ns-in').value.trim();
+      const pass = $('pass-in').value.trim();
+      const blob = new Blob([Aether.page(origin, ns, { passphrase: pass })], { type: 'text/html' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'aether-app.html';
+      a.click();
+    });
 
   const sides = document.querySelectorAll('.side-index a');
   if (sides.length && 'IntersectionObserver' in window) {
@@ -56,9 +112,9 @@
 
   $('copy').addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText($('snip').textContent);
+      await navigator.clipboard.writeText(visibleSnip().textContent);
       $('copy').textContent = 'copied';
-      setTimeout(() => ($('copy').textContent = 'copy the hitch'), 1400);
+      setTimeout(() => ($('copy').textContent = 'copy'), 1400);
     } catch {
       $('copy').textContent = 'select it yourself';
     }

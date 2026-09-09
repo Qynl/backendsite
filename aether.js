@@ -1579,8 +1579,77 @@
     return r;
   }
 
-  return {
+  function parseLink(s) {
+    if (!s) return { ns: '', passphrase: '' };
+    s = String(s).trim();
+    if (/^aether:\/\//i.test(s)) s = s.replace(/^aether:\/\//i, '');
+    let passphrase = '';
+    const hash = s.indexOf('#');
+    if (hash !== -1) {
+      passphrase = decodeURIComponent(s.slice(hash + 1));
+      s = s.slice(0, hash);
+    }
+    const q = s.indexOf('?');
+    if (q !== -1) {
+      const qs = new URLSearchParams(s.slice(q + 1));
+      passphrase = passphrase || qs.get('p') || qs.get('pass') || qs.get('passphrase') || '';
+      s = s.slice(0, q);
+    }
+    return { ns: decodeURIComponent(s), passphrase };
+  }
+
+  function secret() {
+    const h = hex(randBytes(16));
+    return 'ae-' + h.slice(0, 8) + '-' + h.slice(8, 16) + '-' + h.slice(16, 24) + '-' + h.slice(24);
+  }
+
+  function link(ns, passphrase) {
+    let s = 'aether://' + encodeURIComponent(ns);
+    if (passphrase) s += '#' + encodeURIComponent(passphrase);
+    return s;
+  }
+
+  function snippet(scriptSrc, ns, opts) {
+    opts = opts || {};
+    const as = opts.as || 'db';
+    const pass = opts.passphrase || '';
+    let tag = '<script src="' + scriptSrc + '" data-aether="' + ns + '"';
+    if (pass) tag += ' data-pass="' + pass + '"';
+    if (as !== 'db') tag += ' data-as="' + as + '"';
+    tag += '></script>';
+    return tag;
+  }
+
+  function page(scriptSrc, ns, opts) {
+    opts = opts || {};
+    return (
+      '<!DOCTYPE html>\n<meta charset="utf-8">\n<title>Æther</title>\n' +
+      snippet(scriptSrc, ns, opts) +
+      '\n<script>\n' +
+      "document.addEventListener('aether-ready', function (e) {\n" +
+      '  var db = e.detail;\n' +
+      "  db.set('hello/' + location.host, { at: Date.now() });\n" +
+      "  db.watch('', function (k, v) { console.log(k, v); });\n" +
+      '});\n' +
+      '</script>\n'
+    );
+  }
+
+  const waiters = [];
+  const api = {
     open,
+    hitch: hitch,
+    connect: hitch,
+    use: hitch,
+    when: when,
+    secret,
+    link,
+    parse: parseLink,
+    snippet,
+    page,
+    boot: boot,
+    db: null,
+    ready: null,
     theorem,
     version: VERSION,
     Lattice,
@@ -1592,4 +1661,60 @@
     trackers: DEFAULT_TRACKERS,
     mqtt: DEFAULT_MQTT
   };
+
+  function hitch(nsOrLink, opts) {
+    const parsed = parseLink(nsOrLink);
+    if (!parsed.ns) return Promise.reject(new Error('Aether.hitch needs a namespace'));
+    const o = Object.assign({}, opts || {});
+    if (parsed.passphrase && !o.passphrase) o.passphrase = parsed.passphrase;
+    api.ready = open(parsed.ns, o).then(function (db) {
+      api.db = db;
+      waiters.splice(0).forEach(function (fn) {
+        try {
+          fn(db);
+        } catch (e) {}
+      });
+      return db;
+    });
+    return api.ready;
+  }
+
+  function when(fn) {
+    if (api.db) {
+      fn(api.db);
+      return;
+    }
+    waiters.push(fn);
+    if (api.ready) api.ready.then(fn);
+  }
+
+  function boot() {
+    if (typeof document === 'undefined') return;
+    const nodes = [];
+    const cur = document.currentScript;
+    if (cur && (cur.getAttribute('data-aether') || cur.getAttribute('data-connect'))) nodes.push(cur);
+    document.querySelectorAll('script[data-aether], script[data-connect]').forEach(function (s) {
+      if (nodes.indexOf(s) === -1) nodes.push(s);
+    });
+    const el = nodes[0];
+    if (!el) return;
+    const ns = el.getAttribute('data-aether') || el.getAttribute('data-connect');
+    if (!ns) return;
+    const pass = el.getAttribute('data-pass') || el.getAttribute('data-passphrase') || '';
+    const as = el.getAttribute('data-as') || 'db';
+    hitch(ns, pass ? { passphrase: pass } : {}).then(function (db) {
+      try {
+        if (typeof window !== 'undefined') {
+          window[as] = db;
+          window.dispatchEvent(new CustomEvent('aether-ready', { detail: db }));
+        }
+      } catch (e) {}
+    });
+  }
+
+  return api;
 });
+
+if (typeof document !== 'undefined' && typeof Aether !== 'undefined' && Aether.boot) {
+  Aether.boot();
+}

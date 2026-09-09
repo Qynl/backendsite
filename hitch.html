@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Æther hitch — paste this on any site</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <style>
+    :root { --bg:#090a07; --fg:#f1e6d0; --dim:#9aa190; --acid:#ddf35a; --line:rgba(241,230,208,.14); }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; padding: 28px 20px 80px; }
+    h1 { font-size: 22px; font-weight: 600; letter-spacing: -.03em; margin: 0 0 6px; }
+    p { color: var(--dim); max-width: 52ch; }
+    code, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--acid); word-break: break-all; }
+    textarea { width: 100%; max-width: 720px; min-height: 220px; background: transparent; color: var(--fg); border: 1px solid var(--line); padding: 14px; font: 16px/1.5 ui-sans-serif, system-ui; }
+    .ok { color: var(--acid); font-size: 13px; margin-top: 10px; }
+    a { color: var(--acid); }
+  </style>
+</head>
+<body>
+  <h1>Shared notepad — no server</h1>
+  <p>This page is a different URL from the exhibition. It hitches with <em>one script tag</em>. Same namespace → same text on every site that uses it.</p>
+  <p class="mono" id="ns">connecting…</p>
+  <textarea id="pad" placeholder="type. it appears everywhere this namespace is open." disabled></textarea>
+  <div class="ok" id="st">…</div>
+  <p><a href="index.html">← æther</a></p>
+
+  <script src="aether.js"></script>
+  <script>
+    (function () {
+      const q = new URLSearchParams(location.search);
+      const ns = q.get('ns') || decodeURIComponent((location.hash || '').replace(/^#/, '')) || 'æther://genesis';
+      const pass = q.get('p') || '';
+      document.getElementById('ns').textContent = Aether.link(ns, pass);
+      const pad = document.getElementById('pad');
+      const st = document.getElementById('st');
+      Aether.hitch(ns, pass ? { passphrase: pass } : {}).then(function (db) {
+        window.db = db;
+        pad.disabled = false;
+        const cur = db.get('pad');
+        if (typeof cur === 'string') pad.value = cur;
+        st.textContent = 'live · replica ' + db.actor.id.slice(0, 8);
+        db.watch('pad', function (_k, v) {
+          if (typeof v === 'string' && v !== pad.value) pad.value = v;
+        });
+        let t;
+        pad.addEventListener('input', function () {
+          clearTimeout(t);
+          t = setTimeout(function () { db.set('pad', pad.value); }, 180);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
