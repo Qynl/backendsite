@@ -74,7 +74,7 @@ Anyone who knows the string can join the swarm. Do not commit it if the data is 
 
 Optional second lock: `data-pass` / `{ passphrase }` encrypts every value with AES-GCM. Trackers still group by the name; lurkers without the passphrase only see ciphertext.
 
-### 4. Use it like any backend
+### 5. Use it like any backend
 
 **Key-value (the primitive)**
 
