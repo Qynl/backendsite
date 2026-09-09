@@ -134,6 +134,8 @@
     cout.scrollTop = cout.scrollHeight;
   }
   cprint('æther ' + Aether.version + ' — waiting for replica…');
+  const ticket = Aether.account && Aether.account.me();
+  if (ticket) cprint('account ' + ticket.plan + (ticket.role === 'admin' ? ' · admin' : ''));
   cprint('commands: get set del inc count keys scan append tail peers merkle who help');
 
   /* ── star field ── */

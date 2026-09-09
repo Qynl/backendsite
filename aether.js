@@ -17,12 +17,68 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.3.0';
+  const VERSION = '0.4.0';
   const CHAN = 'aether';
   const MAX_PEERS = 24;
   const CHUNK = 12000;
   const EVENT_CAP = 8000;
   const KEEP_MAX = 180000;
+  const GATE_NS = 'æther://gate';
+  const GENESIS_NS = 'æther://genesis';
+  const FOUNDER_EMAIL = 'qynlden@tutamail.com';
+  const TICKET_KEY = 'aether.ticket';
+  const PLANS = {
+    anon: {
+      ns: 1,
+      keys: 24,
+      writes: 40,
+      peers: 4,
+      files: 8 * 1024,
+      eur: 0,
+      label: 'anon',
+      blurb: 'No email yet. Tiny room.'
+    },
+    spark: {
+      ns: 1,
+      keys: 80,
+      writes: 200,
+      peers: 8,
+      files: 2e6,
+      eur: 0,
+      label: 'spark',
+      blurb: 'Email-proven. Free. Enough to hitch a site.'
+    },
+    braid: {
+      ns: 20,
+      keys: 8000,
+      writes: 20000,
+      peers: 24,
+      files: 2e6,
+      eur: 9,
+      label: 'braid',
+      blurb: 'Twenty namespaces. Real apps.'
+    },
+    loom: {
+      ns: 100,
+      keys: 100000,
+      writes: Infinity,
+      peers: 24,
+      files: 2e6,
+      eur: 29,
+      label: 'loom',
+      blurb: 'Wide limits. Still no server of yours.'
+    },
+    void: {
+      ns: Infinity,
+      keys: Infinity,
+      writes: Infinity,
+      peers: Infinity,
+      files: Infinity,
+      eur: 0,
+      label: 'void',
+      blurb: 'Admin. Infinite. Full control.'
+    }
+  };
   const DEFAULT_TRACKERS = [
     'wss://tracker.openwebtorrent.com',
     'wss://tracker.webtorrent.dev',
@@ -190,7 +246,7 @@
     }
     _op(op, key, value, ts, actor) {
       if (!key) return;
-      const fww = key === '#genesis' || key.startsWith('~name/');
+      const fww = key === '#genesis' || key.startsWith('~name/') || key.startsWith('~mail/');
       const cur = this.state.get(key);
       if (fww && cur && !cur.del) return;
       if (!cur || ts > cur.ts || (ts === cur.ts && actor > cur.actor)) {
@@ -684,6 +740,9 @@
       this.rules = this.opts.rules || { '*': { read: true, write: true } };
       this.sigTopic = '';
       this.keepTopic = '';
+      this._fns = { q: {}, m: {} };
+      this.account = null;
+      this.meter = false;
       const self = this;
       this.files = {
         put: (x) => self._filePut(x),
@@ -819,11 +878,26 @@
         this._bindMqtt(this.opts.mqtt || DEFAULT_MQTT);
       }
       this.ready = true;
+      this.meter =
+        this.opts.meter != null
+          ? !!this.opts.meter
+          : this.ns !== GATE_NS && this.ns !== GENESIS_NS;
+      if (this.opts.ticket) this.bindAccount(this.opts.ticket);
       this._presenceTimer = setInterval(() => this._beat(), 12000);
       this._keepTimer = setInterval(() => this._publishKeep(), 40000);
       await this._beat();
       if (!this.get('#genesis')) {
         await this.set('#genesis', { founder: this.actor.id, at: Date.now(), v: VERSION });
+      }
+      if (this.meter && this.account && this.account.eh && !this.get('#lease')) {
+        try {
+          await this.set('#lease', {
+            eh: this.account.eh,
+            plan: this.account.plan,
+            actor: this.actor.id,
+            at: Date.now()
+          });
+        } catch (e) {}
       }
       const published = this.get('#rules');
       if (published && typeof published === 'object') this.rules = Object.assign({}, this.rules, published);
@@ -1242,9 +1316,33 @@
       }
       return best;
     }
+    _adminActor(actor) {
+      const cfg = this.get('~cfg/admin');
+      return !!(cfg && cfg.actor === actor);
+    }
     _canWrite(key, actor) {
       if (key.startsWith('#p/') || key.startsWith('#c/') || key.startsWith('#l/') || key.startsWith('#f/')) return true;
       if (key === '#genesis' || key.startsWith('~name/') || key.startsWith('~actor/')) return true;
+      if (key.startsWith('~otp/') || key.startsWith('~sess/')) return true;
+      if (key.startsWith('~mail/')) return true;
+      if (key.startsWith('~acct/')) {
+        const eh = key.slice(6);
+        const mail = this.get('~mail/' + eh);
+        if (mail && mail.actor === actor) return true;
+        if (this._adminActor(actor)) return true;
+        return !this.get(key);
+      }
+      if (key.startsWith('~inv/')) {
+        if (!this.get(key)) return true;
+        return this._adminActor(actor);
+      }
+      if (key.startsWith('~ban/') || key.startsWith('~cfg/') || key.startsWith('~ns/')) {
+        if (key === '~cfg/admin' && !this.get(key)) return true;
+        if (key.startsWith('~ns/') && !this.get(key)) return true;
+        const cur = this.get(key);
+        if (key.startsWith('~ns/') && cur && cur.actor === actor) return true;
+        return this._adminActor(actor);
+      }
       if (key === '#rules') {
         const g = this.get('#genesis');
         return !g || g.founder === actor;
@@ -1339,10 +1437,74 @@
       for (const rec of this.peers.values()) if (rec.via === 'webrtc' && rec.open) rec.send(msg);
     }
 
+    _plan() {
+      if (!this.meter) return PLANS.void;
+      const t = this.account;
+      if (t && (t.role === 'admin' || t.plan === 'void')) return PLANS.void;
+      if (t && t.plan && PLANS[t.plan]) return PLANS[t.plan];
+      return PLANS.anon;
+    }
+    bindAccount(ticket) {
+      this.account = ticket || null;
+      if (ticket)
+        this.log(
+          'account ' + (ticket.plan || 'anon') + (ticket.role === 'admin' ? ' · admin void' : '')
+        );
+      return this;
+    }
+    meteredKeys() {
+      let n = 0;
+      for (const [k, c] of this.lattice.state) {
+        if (c.del) continue;
+        if (k.startsWith('#p/') || k.startsWith('#c/')) continue;
+        n++;
+      }
+      return n;
+    }
+    writesToday() {
+      const start = new Date();
+      start.setUTCHours(0, 0, 0, 0);
+      const t0 = start.getTime();
+      const me = this.actor && this.actor.id;
+      let n = 0;
+      for (const id of this.lattice.order) {
+        const e = this.lattice.events.get(id);
+        if (!e || e.actor !== me) continue;
+        const o = HLC.parse(e.ts);
+        if (o && o.pt >= t0) n++;
+      }
+      return n;
+    }
+    checkQuota(op, key) {
+      if (!this.meter) return;
+      const t = this.account;
+      if (t && t.banned) throw new Error('account banned');
+      const plan = this._plan();
+      if (plan.writes === Infinity && plan.keys === Infinity) return;
+      const k = String(key || '');
+      if (k.startsWith('#p/') || k.startsWith('#c/') || k === '#genesis' || k === '#lease') return;
+      if (this.writesToday() >= plan.writes)
+        throw new Error(
+          'Æther limit: ' +
+            (t && t.plan ? t.plan : 'anon') +
+            ' allows ' +
+            plan.writes +
+            ' writes/day. Pay for more: gate.html#plans'
+        );
+      if ((op === 'set' || op === 'batch') && this.meteredKeys() >= plan.keys)
+        throw new Error(
+          'Æther limit: ' +
+            (t && t.plan ? t.plan : 'anon') +
+            ' allows ' +
+            plan.keys +
+            ' keys. Pay for more: gate.html#plans'
+        );
+    }
     async mutate(op, key, value) {
       if (!this.ready && op !== 'set') {
         /* genesis during open */
       }
+      this.checkQuota(op, key);
       if (key && !this._canWrite(String(key), this.actor.id)) throw new Error('write denied by rules: ' + key);
       if (op === 'batch' && Array.isArray(value)) {
         for (const item of value) {
@@ -1455,6 +1617,7 @@
           query: (t) => self.q(t)
         },
         auth: self.auth.me(),
+        account: self.account,
         now: () => Date.now()
       };
     }
@@ -1587,7 +1750,8 @@
         buf = te.encode(JSON.stringify(input));
         type = 'application/json';
       }
-      if (buf.length > 2000000) throw new Error('file too large (2MB)');
+      const cap = this.meter ? this._plan().files : 2000000;
+      if (buf.length > cap) throw new Error('file too large for this plan (' + cap + ' bytes)');
       const hash = await sha256(buf);
       const size = 8000;
       const n = Math.ceil(buf.length / size) || 1;
@@ -1794,6 +1958,276 @@
     );
   }
 
+  function loadTicket() {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const t = JSON.parse(localStorage.getItem(TICKET_KEY) || 'null');
+      if (!t || (t.exp && t.exp < Date.now())) return null;
+      return t;
+    } catch {
+      return null;
+    }
+  }
+  function saveTicket(t) {
+    api.ticket = t || null;
+    if (typeof localStorage === 'undefined') return;
+    try {
+      if (!t) localStorage.removeItem(TICKET_KEY);
+      else localStorage.setItem(TICKET_KEY, JSON.stringify(t));
+    } catch {}
+  }
+  function normEmail(e) {
+    return String(e || '')
+      .trim()
+      .toLowerCase();
+  }
+  async function hashEmail(e) {
+    return (await sha256('aether:mail:' + normEmail(e))).slice(0, 32);
+  }
+  async function founderEh() {
+    return hashEmail(FOUNDER_EMAIL);
+  }
+  let gateReady = null;
+  function openGate(opts) {
+    if (api.gate && !api.gate.closed) return Promise.resolve(api.gate);
+    if (gateReady) return gateReady;
+    gateReady = open(GATE_NS, Object.assign({ meter: false }, opts || {})).then(function (db) {
+      api.gate = db;
+      return db;
+    });
+    return gateReady;
+  }
+  async function sendMagicMail(email, url, code) {
+    const message =
+      'Someone (hopefully you) asked to enter Æther. There is no password.\n\nOpen this link:\n' +
+      url +
+      '\n\nOr type this code on the gate page: ' +
+      code +
+      '\n\nExpires in 20 minutes. If this was not you, ignore the letter.';
+    try {
+      const r = await fetch('https://formsubmit.co/ajax/' + encodeURIComponent(email), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          _subject: 'Æther login — no password exists',
+          _template: 'box',
+          _captcha: 'false',
+          name: 'Æther',
+          message: message
+        })
+      });
+      const raw = await r.text();
+      let ok = r.ok;
+      try {
+        const j = JSON.parse(raw);
+        if (j.success === 'false' || j.success === false) ok = false;
+      } catch {}
+      return { hop: 'formsubmit', ok: ok, status: r.status, raw: raw };
+    } catch (e) {
+      return { hop: 'formsubmit', ok: false, error: String(e.message || e) };
+    }
+  }
+  async function sendLogin(email) {
+    email = normEmail(email);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('that is not an email');
+    const eh = await hashEmail(email);
+    const gate = await openGate();
+    const nonce = hex(randBytes(16));
+    const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+    const codeHash = await sha256(code);
+    await gate.set('~otp/' + nonce, { eh: eh, codeHash: codeHash, exp: Date.now() + 20 * 60 * 1000, at: Date.now() });
+    let origin = '';
+    if (typeof location !== 'undefined')
+      origin = location.origin + location.pathname.replace(/[^/]*$/, '');
+    const url = origin + 'gate.html?otp=' + encodeURIComponent(nonce) + '&eh=' + encodeURIComponent(eh);
+    const mailed = await sendMagicMail(email, url, code);
+    return { eh: eh, nonce: nonce, mailed: mailed, url: url, mailto: 'mailto:' + email + '?subject=' + encodeURIComponent('Æther login') + '&body=' + encodeURIComponent('Open: ' + url + '\nCode: ' + code), code: code };
+  }
+  async function proveLogin(opts) {
+    opts = opts || {};
+    const gate = await openGate();
+    const rec = gate.get('~otp/' + opts.otp);
+    if (!rec) throw new Error('unknown or spent link');
+    if (rec.exp < Date.now()) throw new Error('link expired — ask for a new letter');
+    const email = opts.email ? normEmail(opts.email) : '';
+    const eh = opts.eh || (email ? await hashEmail(email) : '');
+    if (!eh || rec.eh !== eh) throw new Error('email mismatch');
+    if (opts.code) {
+      const ch = await sha256(String(opts.code).trim());
+      if (ch !== rec.codeHash) throw new Error('bad code');
+    }
+    const mailKey = '~mail/' + eh;
+    if (!gate.get(mailKey)) {
+      await gate.set(mailKey, { eh: eh, actor: gate.actor.id, pub: gate.actor.pub, at: Date.now() });
+    }
+    await gate.set('~sess/' + gate.actor.id, { eh: eh, at: Date.now() });
+    const isFounder = eh === (await founderEh());
+    let acct = gate.get('~acct/' + eh);
+    if (!acct) {
+      acct = {
+        eh: eh,
+        plan: isFounder ? 'void' : 'spark',
+        role: isFounder ? 'admin' : 'user',
+        at: Date.now(),
+        actor: gate.actor.id
+      };
+      await gate.set('~acct/' + eh, acct);
+    } else if (isFounder && (acct.plan !== 'void' || acct.role !== 'admin')) {
+      acct = Object.assign({}, acct, { plan: 'void', role: 'admin' });
+      await gate.set('~acct/' + eh, acct);
+    }
+    if (isFounder && !gate.get('~cfg/admin')) {
+      await gate.set('~cfg/admin', { eh: eh, actor: gate.actor.id, at: Date.now(), email: FOUNDER_EMAIL });
+    }
+    if (gate.get('~ban/' + eh)) throw new Error('this account is banned');
+    try {
+      await gate.del('~otp/' + opts.otp);
+    } catch (e) {}
+    const ticket = {
+      v: 1,
+      email: email || undefined,
+      eh: eh,
+      plan: acct.plan,
+      role: acct.role,
+      actor: gate.actor.id,
+      exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
+      at: Date.now()
+    };
+    saveTicket(ticket);
+    if (api.db && api.db.bindAccount) api.db.bindAccount(ticket);
+    return ticket;
+  }
+  async function refreshAccount() {
+    const t = loadTicket();
+    if (!t) return null;
+    const gate = await openGate();
+    if (gate.get('~ban/' + t.eh)) {
+      saveTicket(null);
+      if (api.db) api.db.bindAccount(null);
+      throw new Error('this account is banned');
+    }
+    const acct = gate.get('~acct/' + t.eh);
+    if (acct) {
+      t.plan = acct.plan;
+      t.role = acct.role;
+      saveTicket(t);
+      if (api.db && api.db.bindAccount) api.db.bindAccount(t);
+    }
+    return t;
+  }
+  function logout() {
+    saveTicket(null);
+    if (api.db && api.db.bindAccount) api.db.bindAccount(null);
+  }
+  async function checkout(plan) {
+    if (plan !== 'braid' && plan !== 'loom') throw new Error('pick braid or loom');
+    const t = loadTicket();
+    if (!t) throw new Error('log in with email first');
+    const gate = await openGate();
+    const id = uid();
+    const inv = { id: id, eh: t.eh, plan: plan, eur: PLANS[plan].eur, status: 'open', at: Date.now() };
+    await gate.set('~inv/' + id, inv);
+    const pay = gate.get('~cfg/pay') || {};
+    return { invoice: inv, pay: pay, mail: FOUNDER_EMAIL };
+  }
+  async function markPaid(id) {
+    const t = loadTicket();
+    if (!t) throw new Error('log in first');
+    const gate = await openGate();
+    const inv = gate.get('~inv/' + id);
+    if (!inv) throw new Error('no invoice');
+    if (inv.eh !== t.eh && t.role !== 'admin') throw new Error('not your invoice');
+    await gate.set('~inv/' + id, Object.assign({}, inv, { status: 'pending', claimed: Date.now() }));
+    return gate.get('~inv/' + id);
+  }
+  function needAdmin() {
+    const t = loadTicket();
+    if (!t || t.role !== 'admin') throw new Error('admin only');
+    return t;
+  }
+  async function adminConfirm(id) {
+    needAdmin();
+    const gate = await openGate();
+    const inv = gate.get('~inv/' + id);
+    if (!inv) throw new Error('no invoice');
+    await gate.set('~inv/' + id, Object.assign({}, inv, { status: 'paid', paid: Date.now() }));
+    const acct = gate.get('~acct/' + inv.eh) || { eh: inv.eh, at: Date.now() };
+    await gate.set('~acct/' + inv.eh, Object.assign({}, acct, { plan: inv.plan }));
+    return gate.get('~acct/' + inv.eh);
+  }
+  async function adminSetPlan(eh, plan) {
+    needAdmin();
+    if (!PLANS[plan]) throw new Error('unknown plan');
+    const gate = await openGate();
+    const acct = gate.get('~acct/' + eh) || { eh: eh, at: Date.now() };
+    const role = plan === 'void' ? 'admin' : acct.role === 'admin' && plan !== 'void' ? 'user' : acct.role || 'user';
+    await gate.set('~acct/' + eh, Object.assign({}, acct, { plan: plan, role: role }));
+    return gate.get('~acct/' + eh);
+  }
+  async function adminBan(eh, reason) {
+    needAdmin();
+    const gate = await openGate();
+    await gate.set('~ban/' + eh, { at: Date.now(), reason: String(reason || '') });
+    return true;
+  }
+  async function adminUnban(eh) {
+    needAdmin();
+    const gate = await openGate();
+    await gate.del('~ban/' + eh);
+    return true;
+  }
+  async function adminSetPay(cfg) {
+    needAdmin();
+    const gate = await openGate();
+    await gate.set('~cfg/pay', cfg || {});
+    return cfg;
+  }
+  function listAccounts() {
+    const g = api.gate;
+    if (!g) return [];
+    const out = [];
+    for (const [k, v] of g.scan('~mail/')) {
+      const eh = k.slice(6);
+      const acct = g.get('~acct/' + eh) || {};
+      const ban = g.get('~ban/' + eh);
+      out.push({
+        eh: eh,
+        actor: v && v.actor,
+        plan: acct.plan || 'spark',
+        role: acct.role || 'user',
+        banned: !!ban,
+        reason: ban && ban.reason,
+        at: (acct.at || v.at) | 0
+      });
+    }
+    return out;
+  }
+  function listInvoices() {
+    const g = api.gate;
+    if (!g) return [];
+    return g.scan('~inv/').map(function (row) {
+      return row[1];
+    });
+  }
+  async function claimNamespace(ns, ticket) {
+    ticket = ticket || loadTicket();
+    if (!ticket) throw new Error('connections need an account — log in at gate.html');
+    const gate = await openGate();
+    if (gate.get('~ban/' + ticket.eh)) throw new Error('banned');
+    const nsHash = (await sha256('aether:ns:' + ns)).slice(0, 24);
+    const key = '~ns/' + nsHash;
+    const cur = gate.get(key);
+    if (cur && cur.eh !== ticket.eh && ticket.role !== 'admin') throw new Error('namespace owned by another account');
+    const owned = gate.scan('~ns/').filter(function (row) {
+      return row[1] && row[1].eh === ticket.eh;
+    }).length;
+    const plan = PLANS[ticket.plan] || PLANS.spark;
+    if (ticket.role !== 'admin' && !cur && owned >= plan.ns)
+      throw new Error('Æther limit: ' + ticket.plan + ' allows ' + plan.ns + ' namespace(s). Pay: gate.html#plans');
+    if (!cur) await gate.set(key, { eh: ticket.eh, ns: ns, actor: gate.actor.id, at: Date.now() });
+    return gate.get(key);
+  }
+
   const waiters = [];
   const pendingDefine = [];
 
@@ -1892,6 +2326,36 @@
     mount,
     db: null,
     ready: null,
+    gate: null,
+    ticket: loadTicket(),
+    account: {
+      send: sendLogin,
+      prove: proveLogin,
+      me: loadTicket,
+      logout: logout,
+      refresh: refreshAccount,
+      checkout: checkout,
+      markPaid: markPaid,
+      claim: claimNamespace,
+      hash: hashEmail,
+      open: openGate
+    },
+    admin: {
+      email: FOUNDER_EMAIL,
+      confirm: adminConfirm,
+      setPlan: adminSetPlan,
+      ban: adminBan,
+      unban: adminUnban,
+      setPay: adminSetPay,
+      list: listAccounts,
+      invoices: listInvoices,
+      isAdmin: function () {
+        const t = loadTicket();
+        return !!(t && t.role === 'admin');
+      }
+    },
+    plans: PLANS,
+    founder: FOUNDER_EMAIL,
     theorem,
     version: VERSION,
     Lattice,

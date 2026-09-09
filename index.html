@@ -32,7 +32,7 @@
       </svg>
       <div>
         <em>Æther</em><br />
-        protocol 0.3 · unhosted
+        protocol 0.4 · unhosted
       </div>
     </a>
     <nav>
@@ -40,6 +40,7 @@
       <a href="#live">live</a>
       <a href="#theorem">theorem</a>
       <a href="#hitch">hitch a site</a>
+      <a href="gate.html">account</a>
       <a href="README.md">readme</a>
       <a href="elsewhere.html">elsewhere →</a>
     </nav>
@@ -237,6 +238,33 @@ await db.run('messages.send', { body: 'hello' });
 // or zero JS after define:
 // &lt;ul data-ae="messages.list"&gt;&lt;template&gt;&lt;li&gt;{body}&lt;/li&gt;&lt;/template&gt;&lt;/ul&gt;
 // &lt;form data-ae-run="messages.send"&gt;&lt;input name="body"&gt;&lt;/form&gt;</pre>
+      <h3 style="margin-top:48px">Pick a stack. Same lattice.</h3>
+      <p class="sub">Convex, Vite, React, Node, or one HTML tag. You are not choosing a vendor. You are choosing a dialect that all speak Ω.</p>
+      <div class="grid-3">
+        <div class="card">
+          <div class="lbl">React · like Convex</div>
+          <pre class="snip">import { AetherProvider, useQuery, useMutation } from './react.js'</pre>
+          <p class="muted">Hooks. No Convex cloud.</p>
+        </div>
+        <div class="card">
+          <div class="lbl">Vite</div>
+          <pre class="snip">import Aether from './aether.js'
+await Aether.hitch(ns)</pre>
+          <p class="muted">Copy the files. No npm account required.</p>
+        </div>
+        <div class="card">
+          <div class="lbl">Node keeper</div>
+          <pre class="snip">node node.js keep ae-YOUR-SECRET</pre>
+          <p class="muted">A peer that stays awake. Not an API origin.</p>
+        </div>
+      </div>
+
+      <h3 style="margin-top:48px">Email in. No passwords. Pay for width.</h3>
+      <p class="sub">Connections carry an account ticket so honest replicas can meter. <code>qynlden@tutamail.com</code> is admin and infinite. Everyone else starts on spark (free) and pays for braid / loom.</p>
+      <p>
+        <a class="elsewhere-link" href="gate.html">open the gate</a>
+        <a class="elsewhere-link" href="admin.html">admin void</a>
+      </p>
       <p class="muted">
         <button class="copy" id="capsule-out">download capsule</button>
         <label class="copy" style="display:inline-block;margin-left:8px">restore capsule<input id="capsule-in" type="file" accept="application/json" hidden /></label>
@@ -288,6 +316,7 @@ await db.run('messages.send', { body: 'hello' });
         </p>
         <p>
           <a href="aether.js">aether.js</a>
+          · <a href="gate.html">gate</a>
           · <a href="elsewhere.html">elsewhere</a>
           · <a href="README.md">notes</a>
           · Shapiro et al., <em>Conflict-free Replicated Data Types</em>, 2011

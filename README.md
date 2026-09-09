@@ -2,7 +2,9 @@
 
 **A backend that is not a place.**
 
-Convex-shaped queries. Firestore-shaped collections. Zero origin servers. Zero accounts. Zero bill.
+Convex-shaped queries. React / Vite / Node dialects. Firestore-shaped collections. Zero origin data servers.
+
+Accounts are email-only (no passwords). The admin inbox `qynlden@tutamail.com` is infinite. Everyone else has a free spark quota and can pay for width.
 
 The database is a join-semilattice of signed CRDT replicas living in browsers. Public BitTorrent trackers and MQTT brokers are used as *matchmakers* (they exchange WebRTC offers, never your documents). After handshake, every write gossips peer-to-peer. Same-origin tabs also sync on `BroadcastChannel`. Each replica persists to IndexedDB. Encrypted snapshots can sleep as MQTT retained messages so a cold browser can wake the lattice even if nobody else is online. Capsules (downloadable JSON) are the full backup.
 
@@ -206,11 +208,73 @@ You should see:
 - `wss://tracker…` (BitTorrent announce, SDP only)
 - `wss://broker…` (MQTT, SDP + optional retained snapshot)
 - STUN to Google/Cloudflare (ICE)
+- optional `POST formsubmit.co` only when you request a login letter (mail hop, not the database)
 - **No** `fetch`/`XHR` to an API of yours
 
 WebRTC datachannels often do not show as HTTP. `chrome://webrtc-internals` shows them.
 
-### 7. Ship it
+### 7. Choose a stack (same backend)
+
+**HTML tag** — still the easiest. Paste one script.
+
+**Convex-shaped JS** — `Aether.define` / `query` / `mutation` / `live` / `run`.
+
+**React (Vite or CRA)**
+
+```js
+import Aether from './aether.js'
+import { AetherProvider, useQuery, useMutation } from './react.js'
+
+Aether.define({
+  messages: {
+    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
+    send: Aether.mutation(async (ctx, { body }) => ctx.db.insert('messages', { body }))
+  }
+})
+
+function App() {
+  const rows = useQuery('messages.list')
+  const send = useMutation('messages.send')
+  return /* your UI */
+}
+
+<AetherProvider ns="ae-YOUR-SECRET"><App /></AetherProvider>
+```
+
+Copy `aether.js` + `react.js` into the Vite project. `npm i react react-dom`. There is no `npx convex dev`.
+
+**Node keeper** (a replica that stays online, not an origin API):
+
+```
+node node.js keep ae-YOUR-SECRET ./capsule.json
+```
+
+### 8. Accounts — email only, no passwords
+
+1. Open [gate.html](gate.html).
+2. Type your email. A **letter** is sent through a public mail hop (FormSubmit — a matchmaker, like the trackers). First time you may have to click their confirmation mail, then send again.
+3. Open the magic link (or type the 6-digit code). That proves the inbox. A ticket is stored in `localStorage`.
+4. Every `Aether.hitch` on this browser attaches the ticket. Honest replicas meter writes/keys/namespaces against the plan.
+
+There is no password field anywhere. There never will be.
+
+Admin: **`qynlden@tutamail.com`**. That address is compiled into the protocol. After it proves itself via email it is `role: admin`, plan `void` — infinite keys, writes, namespaces, peers — and the only identity that may confirm payments, change plans, ban, and publish Stripe/PayPal/crypto links.
+
+### 9. Pay for wider limits
+
+| plan | € / mo | namespaces | keys | writes / day |
+|---|---|---|---|---|
+| anon | 0 | 1 | 24 | 40 |
+| spark | 0 | 1 | 80 | 200 |
+| braid | 9 | 20 | 8 000 | 20 000 |
+| loom | 29 | 100 | 100 000 | ∞ |
+| void (admin) | — | ∞ | ∞ | ∞ |
+
+Checkout at the gate creates an invoice on the **gate lattice** (`æther://gate`). Pay by email to `qynlden@tutamail.com` quoting the invoice id, or via whatever link admin published. Click **I paid**. Admin confirms on [admin.html](admin.html). Then every hitching replica that refreshes the ticket sees the new plan.
+
+Connections without a ticket are `anon`. Connections with a ticket **are** the account — the namespace lease on the gate records `eh` (email hash). That is how limits follow the inbox across origins.
+
+### 10. Ship it
 
 Host `aether.js` + your site as static files (GitHub Pages, nginx, S3, a phone). That is the whole deploy. There is no env var, no dashboard, no region.
 
@@ -228,7 +292,7 @@ Convex is a hosted reactive database: TypeScript queries/mutations run on *their
 | auth | Convex Auth | ECDSA keypair = user |
 | cost / lock-in | metered, their region | zero, no address |
 | server functions with secrets | yes (their RAM) | no — there is no secret server. Put secrets in the namespace/passphrase. |
-| React `useQuery` | official | `db.live(...)` or `data-ae="messages.list"` |
+| React `useQuery` | official | `react.js` → `useQuery` / `useMutation` (peer React) |
 
 Same feeling: write a function, subscribe, the room updates. Different physics: nothing to deploy but a static file.
 
@@ -267,6 +331,8 @@ Open `hitch.html?ns=YOUR-SECRET` for a live room.
 | Cost | meters | 0 |
 | Who can shut it down | the company | nobody. There is no address. |
 | Cold start, zero peers | vendor disk | IndexedDB of last browser, MQTT retain, or a capsule file |
+
+Limits on spark/braid/loom are enforced by honest replicas reading the gate ticket. A malicious fork can ignore them; paying customers hitch the official `aether.js`. Admin can ban an email hash.
 
 ## Honest limits (still not fake)
 
