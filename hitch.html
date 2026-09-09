@@ -3,51 +3,80 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Æther hitch — paste this on any site</title>
+  <title>Æther — live room (no server)</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <style>
-    :root { --bg:#090a07; --fg:#f1e6d0; --dim:#9aa190; --acid:#ddf35a; --line:rgba(241,230,208,.14); }
+    :root { --bg:#090a07; --fg:#f1e6d0; --dim:#8e9486; --acid:#ddf35a; --line:rgba(241,230,208,.14); --card:#10120e; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.5 ui-sans-serif, system-ui, sans-serif; padding: 28px 20px 80px; }
-    h1 { font-size: 22px; font-weight: 600; letter-spacing: -.03em; margin: 0 0 6px; }
-    p { color: var(--dim); max-width: 52ch; }
-    code, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--acid); word-break: break-all; }
-    textarea { width: 100%; max-width: 720px; min-height: 220px; background: transparent; color: var(--fg); border: 1px solid var(--line); padding: 14px; font: 16px/1.5 ui-sans-serif, system-ui; }
-    .ok { color: var(--acid); font-size: 13px; margin-top: 10px; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 ui-sans-serif, system-ui, sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+    header strong { letter-spacing: -.03em; }
+    header span, header a { color: var(--dim); font-size: 13px; font-family: ui-monospace, Menlo, monospace; }
     a { color: var(--acid); }
+    main { flex: 1; display: flex; flex-direction: column; max-width: 720px; width: 100%; margin: 0 auto; padding: 18px 18px 0; }
+    .hint { color: var(--dim); font-size: 14px; margin: 0 0 16px; }
+    #log { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding-bottom: 16px; min-height: 40vh; }
+    #log article { background: var(--card); border: 1px solid var(--line); padding: 10px 12px; }
+    #log .who { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--acid); letter-spacing: .08em; }
+    form { display: flex; gap: 8px; padding: 14px 0 24px; border-top: 1px solid var(--line); }
+    input, button { font: inherit; }
+    input { flex: 1; background: transparent; color: var(--fg); border: 1px solid var(--line); padding: 12px 14px; }
+    button { background: var(--acid); color: #0c0d0a; border: 0; padding: 12px 16px; font-weight: 700; cursor: pointer; }
+    .st { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--dim); }
   </style>
 </head>
 <body>
-  <h1>Shared notepad — no server</h1>
-  <p>This page is a different URL from the exhibition. It hitches with <em>one script tag</em>. Same namespace → same text on every site that uses it.</p>
-  <p class="mono" id="ns">connecting…</p>
-  <textarea id="pad" placeholder="type. it appears everywhere this namespace is open." disabled></textarea>
-  <div class="ok" id="st">…</div>
-  <p><a href="index.html">← æther</a></p>
+  <header>
+    <strong>live room</strong>
+    <span id="ns">connecting…</span>
+    <span class="st" id="st">…</span>
+    <a href="index.html">æther</a>
+  </header>
+  <main>
+    <p class="hint">Convex-shaped queries &amp; mutations. They run on this browser, then gossip. There is no Convex cloud. Open this URL on another device with the same <code>?ns=</code>.</p>
+    <div id="log" data-ae="messages.list">
+      <template>
+        <article>
+          <div class="who">{author}</div>
+          <div>{body}</div>
+        </article>
+      </template>
+    </div>
+    <form data-ae-run="messages.send">
+      <input name="body" maxlength="400" placeholder="say something into the lattice…" required autocomplete="off" />
+      <button type="submit">send</button>
+    </form>
+  </main>
 
   <script src="aether.js"></script>
   <script>
+    Aether.define({
+      messages: {
+        list: Aether.query(function (ctx) {
+          return ctx.db.query('messages').order('_creationTime').collect();
+        }),
+        send: Aether.mutation(async function (ctx, args) {
+          const body = String(args.body || '').trim();
+          if (!body) return;
+          const me = ctx.auth && ctx.auth.id ? ctx.auth.id.slice(0, 8) : 'anon';
+          await ctx.db.insert('messages', { body: body.slice(0, 400), author: me });
+        })
+      }
+    });
     (function () {
       const q = new URLSearchParams(location.search);
       const ns = q.get('ns') || decodeURIComponent((location.hash || '').replace(/^#/, '')) || 'æther://genesis';
       const pass = q.get('p') || '';
       document.getElementById('ns').textContent = Aether.link(ns, pass);
-      const pad = document.getElementById('pad');
-      const st = document.getElementById('st');
       Aether.hitch(ns, pass ? { passphrase: pass } : {}).then(function (db) {
-        window.db = db;
-        pad.disabled = false;
-        const cur = db.get('pad');
-        if (typeof cur === 'string') pad.value = cur;
-        st.textContent = 'live · replica ' + db.actor.id.slice(0, 8);
-        db.watch('pad', function (_k, v) {
-          if (typeof v === 'string' && v !== pad.value) pad.value = v;
-        });
-        let t;
-        pad.addEventListener('input', function () {
-          clearTimeout(t);
-          t = setTimeout(function () { db.set('pad', pad.value); }, 180);
-        });
+        document.getElementById('st').textContent = 'live · ' + db.actor.id.slice(0, 8);
+        Aether.mount();
+        const log = document.getElementById('log');
+        const stick = function () {
+          log.scrollTop = log.scrollHeight;
+        };
+        new MutationObserver(stick).observe(log, { childList: true, subtree: true });
+        stick();
       });
     })();
   </script>

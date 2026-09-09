@@ -17,7 +17,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.2.0';
+  const VERSION = '0.3.0';
   const CHAN = 'aether';
   const MAX_PEERS = 24;
   const CHUNK = 12000;
@@ -592,6 +592,62 @@
     on(fn) {
       return new Query(this.db, this.prefix).on(fn);
     }
+  }
+
+  class CQuery {
+    constructor(db, table) {
+      this.db = db;
+      this.table = table;
+      this._eq = {};
+      this._order = '_creationTime';
+      this._dir = 'asc';
+      this._lim = null;
+    }
+    filter(obj) {
+      this._eq = obj || {};
+      return this;
+    }
+    order(field, dir) {
+      if (field === 'asc' || field === 'desc') this._dir = field;
+      else {
+        this._order = field || '_creationTime';
+        if (dir) this._dir = dir;
+      }
+      return this;
+    }
+    take(n) {
+      this._lim = n;
+      return this;
+    }
+    collect() {
+      let rows = this.db.col(this.table).get();
+      for (const k of Object.keys(this._eq))
+        rows = rows.filter((r) => r.data && r.data[k] === this._eq[k]);
+      const field = this._order;
+      const dir = this._dir;
+      rows.sort((a, b) => {
+        const x = a.data && a.data[field];
+        const y = b.data && b.data[field];
+        if (x < y) return dir === 'desc' ? 1 : -1;
+        if (x > y) return dir === 'desc' ? -1 : 1;
+        if (a.ts < b.ts) return dir === 'desc' ? 1 : -1;
+        if (a.ts > b.ts) return dir === 'desc' ? -1 : 1;
+        return 0;
+      });
+      if (this._lim != null) rows = rows.slice(0, this._lim);
+      return rows.map((r) => Object.assign({ _id: this.table + ':' + r.id }, r.data || {}));
+    }
+    first() {
+      const rows = this.take(1).collect();
+      return rows[0] || null;
+    }
+  }
+
+  function splitId(id) {
+    if (!id || typeof id !== 'string') return null;
+    const i = id.indexOf(':');
+    if (i < 1) return null;
+    return { table: id.slice(0, i), id: id.slice(i + 1) };
   }
 
   class Replica {
@@ -1376,8 +1432,111 @@
     col(name) {
       return new Collection(this, name);
     }
-    query(prefix) {
-      return new Query(this, prefix || '');
+    table(name) {
+      return this.col(name);
+    }
+    query(prefixOrTable) {
+      if (prefixOrTable && prefixOrTable.indexOf('/') === -1 && prefixOrTable.charAt(0) !== '@' && prefixOrTable.charAt(0) !== '#')
+        return new CQuery(this, prefixOrTable);
+      return new Query(this, prefixOrTable || '');
+    }
+    q(table) {
+      return new CQuery(this, table);
+    }
+    ctx() {
+      const self = this;
+      return {
+        db: {
+          insert: (t, d) => self.insert(t, d),
+          get: (id) => self.docGet(id),
+          patch: (id, p) => self.docPatch(id, p),
+          replace: (id, d) => self.docReplace(id, d),
+          delete: (id) => self.docDelete(id),
+          query: (t) => self.q(t)
+        },
+        auth: self.auth.me(),
+        now: () => Date.now()
+      };
+    }
+    async insert(table, data) {
+      const id = uid();
+      const doc = Object.assign({}, data, {
+        _id: table + ':' + id,
+        _creationTime: Date.now(),
+        _author: this.actor && this.actor.id
+      });
+      await this.col(table).doc(id).set(doc);
+      return doc._id;
+    }
+    docGet(id) {
+      const p = splitId(id);
+      if (!p) return null;
+      return this.col(p.table).doc(p.id).get() || null;
+    }
+    async docPatch(id, patch) {
+      const p = splitId(id);
+      if (!p) throw new Error('bad id');
+      await this.col(p.table).doc(p.id).update(patch);
+      return id;
+    }
+    async docReplace(id, data) {
+      const p = splitId(id);
+      if (!p) throw new Error('bad id');
+      const prev = this.col(p.table).doc(p.id).get() || {};
+      await this.col(p.table)
+        .doc(p.id)
+        .set(Object.assign({}, data, { _id: id, _creationTime: prev._creationTime || Date.now() }));
+      return id;
+    }
+    async docDelete(id) {
+      const p = splitId(id);
+      if (!p) throw new Error('bad id');
+      await this.col(p.table).doc(p.id).delete();
+    }
+    define(mods) {
+      if (!this._fns) this._fns = { q: {}, m: {} };
+      for (const mod of Object.keys(mods || {})) {
+        const spec = mods[mod];
+        for (const name of Object.keys(spec || {})) {
+          const fn = spec[name];
+          const key = mod + '.' + name;
+          const kind = fn && fn._aeKind;
+          const isMut =
+            kind === 'mutation' ||
+            (kind !== 'query' && fn && fn.constructor && fn.constructor.name === 'AsyncFunction');
+          if (isMut) this._fns.m[key] = fn;
+          else this._fns.q[key] = fn;
+        }
+      }
+      return this;
+    }
+    live(name, args, cb) {
+      if (typeof args === 'function') {
+        cb = args;
+        args = {};
+      }
+      if (!this._fns) this._fns = { q: {}, m: {} };
+      const q = this._fns.q[name];
+      if (!q) throw new Error('unknown query ' + name);
+      const fire = () => {
+        try {
+          const r = q(this.ctx(), args || {});
+          if (r && typeof r.then === 'function')
+            r.then(cb, function (e) {
+              console.error(e);
+            });
+          else cb(r);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      fire();
+      return this.watch('@/', fire);
+    }
+    async run(name, args) {
+      const m = this._fns.m[name];
+      if (!m) throw new Error('unknown mutation ' + name);
+      return await m(this.ctx(), args || {});
     }
     async batch(ops) {
       return this.mutate('batch', '#batch/' + uid(), ops);
@@ -1636,6 +1795,85 @@
   }
 
   const waiters = [];
+  const pendingDefine = [];
+
+  function markQuery(fn) {
+    fn._aeKind = 'query';
+    return fn;
+  }
+  function markMutation(fn) {
+    fn._aeKind = 'mutation';
+    return fn;
+  }
+  function define(mods) {
+    pendingDefine.push(mods);
+    if (api.db && api.db.define) api.db.define(mods);
+    return mods;
+  }
+  function installDefines(db) {
+    pendingDefine.forEach(function (m) {
+      db.define(m);
+    });
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function interpolate(tpl, row) {
+    return tpl.replace(/\{([a-zA-Z0-9_]+)\}/g, function (_, k) {
+      return escapeHtml(row[k] == null ? '' : row[k]);
+    });
+  }
+  function mount(root) {
+    if (typeof document === 'undefined') return;
+    root = root || document;
+    if (!api.db) {
+      when(function () {
+        mount(root);
+      });
+      return;
+    }
+    const db = api.db;
+    root.querySelectorAll('[data-ae]').forEach(function (el) {
+      if (el.getAttribute('data-ae-bound')) return;
+      el.setAttribute('data-ae-bound', '1');
+      const name = el.getAttribute('data-ae');
+      const tplEl = el.querySelector('template');
+      const tpl = tplEl ? tplEl.innerHTML : el.getAttribute('data-ae-tpl') || '<div>{body}</div>';
+      try {
+        db.live(name, {}, function (rows) {
+          const items = Array.isArray(rows) ? rows : rows == null ? [] : [rows];
+          const html = items
+            .map(function (r) {
+              return interpolate(tpl, r);
+            })
+            .join('');
+          const keep = tplEl ? '<template>' + tplEl.innerHTML + '</template>' : '';
+          el.innerHTML = keep + html;
+        });
+      } catch (e) {
+        el.setAttribute('data-ae-error', String(e && e.message ? e.message : e));
+      }
+    });
+    root.querySelectorAll('[data-ae-run]').forEach(function (el) {
+      if (el.getAttribute('data-ae-bound')) return;
+      el.setAttribute('data-ae-bound', '1');
+      el.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const name = el.getAttribute('data-ae-run');
+        const fd = new FormData(el);
+        const args = {};
+        fd.forEach(function (v, k) {
+          args[k] = v;
+        });
+        db.run(name, args).then(function () {
+          if (typeof el.reset === 'function') el.reset();
+        });
+      });
+    });
+  }
+
   const api = {
     open,
     hitch: hitch,
@@ -1648,6 +1886,10 @@
     snippet,
     page,
     boot: boot,
+    define,
+    query: markQuery,
+    mutation: markMutation,
+    mount,
     db: null,
     ready: null,
     theorem,
@@ -1656,6 +1898,7 @@
     HLC,
     Collection,
     Query,
+    CQuery,
     canonical,
     sha256,
     trackers: DEFAULT_TRACKERS,
@@ -1669,11 +1912,15 @@
     if (parsed.passphrase && !o.passphrase) o.passphrase = parsed.passphrase;
     api.ready = open(parsed.ns, o).then(function (db) {
       api.db = db;
+      installDefines(db);
       waiters.splice(0).forEach(function (fn) {
         try {
           fn(db);
         } catch (e) {}
       });
+      try {
+        mount(document);
+      } catch (e) {}
       return db;
     });
     return api.ready;

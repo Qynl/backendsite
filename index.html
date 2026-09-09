@@ -32,7 +32,7 @@
       </svg>
       <div>
         <em>Æther</em><br />
-        protocol 0.2 · unhosted
+        protocol 0.3 · unhosted
       </div>
     </a>
     <nav>
@@ -220,11 +220,23 @@
         <p class="muted">Site two: paste the same tag (or the same <code>aether://…</code> string into <code>Aether.hitch</code>). Proof: <a href="elsewhere.html">elsewhere</a> already shares genesis with this page.</p>
       </div>
 
-      <h3 style="margin-top:48px">After it is hitched</h3>
-      <pre class="snip">db.set('hello', { from: location.host });
-db.get('hello');
-db.col('users').doc('ada').set({ name: 'Ada' });
-db.watch('', (key, value) =&gt; console.log(key, value));</pre>
+      <h3 style="margin-top:48px">Like Convex — without Convex’s computers</h3>
+      <p class="sub" style="margin-bottom:18px">Queries and mutations, live subscriptions, <code>_id</code> documents. The functions run on every replica, not in a VPC. Same DX. Different ontology.</p>
+      <pre class="snip">Aether.define({
+  messages: {
+    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
+    send: Aether.mutation(async (ctx, { body }) => {
+      await ctx.db.insert('messages', { body, author: ctx.auth.id.slice(0,8) });
+    })
+  }
+});
+
+db.live('messages.list', rows => render(rows));
+await db.run('messages.send', { body: 'hello' });
+
+// or zero JS after define:
+// &lt;ul data-ae="messages.list"&gt;&lt;template&gt;&lt;li&gt;{body}&lt;/li&gt;&lt;/template&gt;&lt;/ul&gt;
+// &lt;form data-ae-run="messages.send"&gt;&lt;input name="body"&gt;&lt;/form&gt;</pre>
       <p class="muted">
         <button class="copy" id="capsule-out">download capsule</button>
         <label class="copy" style="display:inline-block;margin-left:8px">restore capsule<input id="capsule-in" type="file" accept="application/json" hidden /></label>

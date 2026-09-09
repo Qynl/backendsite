@@ -2,7 +2,7 @@
 
 **A backend that is not a place.**
 
-Firebase-shaped API. Zero origin servers. Zero accounts. Zero bill.
+Convex-shaped queries. Firestore-shaped collections. Zero origin servers. Zero accounts. Zero bill.
 
 The database is a join-semilattice of signed CRDT replicas living in browsers. Public BitTorrent trackers and MQTT brokers are used as *matchmakers* (they exchange WebRTC offers, never your documents). After handshake, every write gossips peer-to-peer. Same-origin tabs also sync on `BroadcastChannel`. Each replica persists to IndexedDB. Encrypted snapshots can sleep as MQTT retained messages so a cold browser can wake the lattice even if nobody else is online. Capsules (downloadable JSON) are the full backup.
 
@@ -75,6 +75,33 @@ Anyone who knows the string can join the swarm. Do not commit it if the data is 
 Optional second lock: `data-pass` / `{ passphrase }` encrypts every value with AES-GCM. Trackers still group by the name; lurkers without the passphrase only see ciphertext.
 
 ### 5. Use it like any backend
+
+**Queries & mutations (Convex-shaped)**
+
+Functions run on this replica, then writes gossip. There is no Convex cloud.
+
+```js
+Aether.define({
+  messages: {
+    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
+    send: Aether.mutation(async (ctx, { body }) => {
+      await ctx.db.insert('messages', { body, author: ctx.auth.id.slice(0, 8) });
+    })
+  }
+});
+
+db.live('messages.list', rows => render(rows));
+await db.run('messages.send', { body: 'hello' });
+```
+
+Or after `define`, no further JS:
+
+```html
+<ul data-ae="messages.list"><template><li>{body}</li></template></ul>
+<form data-ae-run="messages.send"><input name="body" /></form>
+```
+
+`ctx.db` has `insert`, `get`, `patch`, `replace`, `delete`, `query(table)`. Documents get `_id` (`table:id`) and `_creationTime`. Open `hitch.html?ns=YOUR-SECRET` for a live room.
 
 **Key-value (the primitive)**
 
@@ -189,7 +216,43 @@ Host `aether.js` + your site as static files (GitHub Pages, nginx, S3, a phone).
 
 ---
 
-## What you get vs a normal backend
+## vs Convex
+
+Convex is a hosted reactive database: TypeScript queries/mutations run on *their* servers, the client subscribes, the UI updates. Æther copies that **shape** (`define`, `query`, `mutation`, `live`, `run`, `ctx.db.insert`) and deletes the company.
+
+| | Convex | ÆTHER |
+|---|---|---|
+| `query` / `mutation` | runs in Convex cloud | runs on every replica (your browser) |
+| live UI | websocket to Convex | WebRTC mesh + BroadcastChannel |
+| `ctx.db.insert/get/patch` | ACID on their cluster | LWW CRDT join (eventually consistent, mathematically unique Ω) |
+| auth | Convex Auth | ECDSA keypair = user |
+| cost / lock-in | metered, their region | zero, no address |
+| server functions with secrets | yes (their RAM) | no — there is no secret server. Put secrets in the namespace/passphrase. |
+| React `useQuery` | official | `db.live(...)` or `data-ae="messages.list"` |
+
+Same feeling: write a function, subscribe, the room updates. Different physics: nothing to deploy but a static file.
+
+```js
+Aether.define({
+  messages: {
+    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
+    send: Aether.mutation(async (ctx, { body }) => {
+      await ctx.db.insert('messages', { body });
+    })
+  }
+});
+db.live('messages.list', render);
+await db.run('messages.send', { body: 'hi' });
+```
+
+HTML with no further JS:
+
+```html
+<ul data-ae="messages.list"><template><li>{body}</li></template></ul>
+<form data-ae-run="messages.send"><input name="body" /></form>
+```
+
+Open `hitch.html?ns=YOUR-SECRET` for a live room.
 
 | | Firebase / Supabase | ÆTHER |
 |---|---|---|

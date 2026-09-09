@@ -37,10 +37,15 @@
     if ($('snip-js'))
       $('snip-js').textContent = `<script src="${origin}"></script>
 <script>
+  Aether.define({
+    messages: {
+      list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
+      send: Aether.mutation(async (ctx, { body }) => ctx.db.insert('messages', { body }))
+    }
+  });
   Aether.hitch('${ns}'${pass ? `, { passphrase: '${pass}' }` : ''}).then(db => {
-    window.db = db;
-    db.set('hello', { from: location.host });
-    db.watch('', (k, v) => console.log(k, v));
+    db.live('messages.list', rows => console.log(rows));
+    db.run('messages.send', { body: 'hello from ' + location.host });
   });
 </script>`;
     if ($('snip-html')) $('snip-html').textContent = Aether.page(origin, ns, { passphrase: pass });
