@@ -293,6 +293,28 @@ pre.snip {
 }
 .elsewhere-link:hover { background: var(--copper); color: var(--ink); }
 
+.steps {
+  list-style: none; padding: 0; margin: 0 0 40px; counter-reset: st;
+  max-width: 78ch;
+}
+.steps li {
+  counter-increment: st;
+  position: relative;
+  padding: 16px 0 16px 64px;
+  border-top: 1px solid var(--rule);
+  color: var(--bone-dim);
+}
+.steps li b { display: block; color: var(--bone); font-family: var(--display); font-size: 20px; letter-spacing: -0.03em; margin-bottom: 4px; }
+.steps li::before {
+  content: counter(st, decimal-leading-zero);
+  position: absolute; left: 0; top: 18px;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; color: var(--acid);
+}
+.cmp { width: 100%; border-collapse: collapse; font-size: 15px; }
+.cmp th, .cmp td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--rule); }
+.cmp th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--copper); font-weight: 500; }
+.cmp td:nth-child(3) { color: var(--acid); }
+
 @media (max-width: 900px) {
   .hero-body, .grid-2, .grid-3, .proof { grid-template-columns: 1fr; }
   .hero-aside { border-left: 0; border-top: 1px solid var(--rule); padding: 22px 0 0; }

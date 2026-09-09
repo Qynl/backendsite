@@ -20,16 +20,24 @@
     .join('');
 
   const origin = location.origin + location.pathname.replace(/[^/]*$/, '') + 'aether.js';
-  $('origin').textContent = origin;
+  if ($('origin')) $('origin').textContent = origin;
   $('snip').textContent = `<script src="${origin}"></script>
 <script>
-  const db = await Aether.open('my-secret-universe');
+(async () => {
+  const db = await Aether.open('replace-with-a-long-secret', {
+    passphrase: 'optional-second-lock',
+    rules: { '*': { read: true, write: true }, 'users/:id': { write: 'owner' } }
+  });
 
-  await db.set('user/ada', { year: 1843 });
+  await db.col('users').doc('ada').set({ name: 'Ada', year: 1843 });
+  db.col('users').where('year', '>=', 1800).on(docs => console.log(docs));
+
   await db.inc('signups', 1);
-  await db.append('audit', { what: 'hello' });
+  await db.files.put(new Blob(['hello'], { type: 'text/plain' }));
+  await db.auth.claim('ada');
 
-  db.watch('', (key, value) => console.log(key, value));
+  const capsule = db.exportCapsule(); // backup the whole lattice
+})();
 </script>`;
 
   const sides = document.querySelectorAll('.side-index a');
@@ -297,6 +305,27 @@
       } catch {}
       await db.set(k, v);
     });
+
+    const capOut = $('capsule-out');
+    if (capOut) {
+      capOut.addEventListener('click', () => {
+        const blob = new Blob([JSON.stringify(db.exportCapsule())], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'aether-capsule.json';
+        a.click();
+      });
+    }
+    const capIn = $('capsule-in');
+    if (capIn) {
+      capIn.addEventListener('change', async () => {
+        const f = capIn.files && capIn.files[0];
+        if (!f) return;
+        const text = await f.text();
+        const n = await db.importCapsule(text);
+        cprint('capsule ingested ' + n, 'ok');
+      });
+    }
 
     $('cin').addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter') return;

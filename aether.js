@@ -1,15 +1,14 @@
 /*  ÆTHER  —  the backend that is not a place.
     ──────────────────────────────────────────
     A join-semilattice of signed CRDT replicas that inhabit browsers.
-    There is no origin server for data. Public BitTorrent trackers and
-    MQTT brokers are used only as *matchmakers* (SDP exchange). Once
-    WebRTC opens, every mutation is gossiped peer-to-peer. Same-origin
-    tabs also sync over BroadcastChannel. Persistence is IndexedDB on
-    every replica. The global state is the least upper bound of all
-    replicas — proven eventually consistent (Shapiro et al., 2011).
+    No origin server holds data. Public BitTorrent trackers and MQTT
+    brokers are matchmakers (SDP) and optional keepers (encrypted
+    retained snapshots). After handshake, mutations gossip over WebRTC.
+    Same-origin tabs sync on BroadcastChannel. Persistence is IndexedDB
+    plus capsule export. Ω is the least upper bound of all replicas.
 
-    Any website includes this file, opens the same namespace, and they
-    share one mathematical object. Capability = knowledge of the name.
+    Capability = the namespace string. Any origin that opens the same
+    name is the same backend.
 */
 (function (root, factory) {
   const api = factory();
@@ -18,11 +17,12 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const CHAN = 'aether';
-  const MAX_PEERS = 16;
+  const MAX_PEERS = 24;
   const CHUNK = 12000;
-  const EVENT_CAP = 4000;
+  const EVENT_CAP = 8000;
+  const KEEP_MAX = 180000;
   const DEFAULT_TRACKERS = [
     'wss://tracker.openwebtorrent.com',
     'wss://tracker.webtorrent.dev',
@@ -30,10 +30,7 @@
     'wss://tracker.btorrent.xyz',
     'wss://tracker.novage.com.ua:8000/announce'
   ];
-  const DEFAULT_MQTT = [
-    'wss://broker.emqx.io:8084/mqtt',
-    'wss://broker.hivemq.com:8884/mqtt'
-  ];
+  const DEFAULT_MQTT = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
   const ICE = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
@@ -42,28 +39,20 @@
     ]
   };
 
-  /* ───────────── bytes & hashes ───────────── */
-
   const te = new TextEncoder();
   const td = new TextDecoder();
-
-  const hex = (buf) =>
-    [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-
+  const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
   const unhex = (h) => {
     const u = new Uint8Array(h.length / 2);
     for (let i = 0; i < u.length; i++) u[i] = parseInt(h.substr(i * 2, 2), 16);
     return u;
   };
-
   const randBytes = (n) => crypto.getRandomValues(new Uint8Array(n));
-
   const binary20 = (u8) => {
     let s = '';
     for (let i = 0; i < 20; i++) s += String.fromCharCode(u8[i]);
     return s;
   };
-
   const binToHex20 = (s) => {
     if (!s) return '';
     if (typeof s !== 'string') s = String(s);
@@ -73,24 +62,69 @@
     for (let i = 0; i < n; i++) h += s.charCodeAt(i).toString(16).padStart(2, '0');
     return h;
   };
-
   const sha256 = async (data) => {
     const buf = typeof data === 'string' ? te.encode(data) : data;
     return hex(await crypto.subtle.digest('SHA-256', buf));
   };
-
   const canonical = (obj) => {
     if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
     if (Array.isArray(obj)) return '[' + obj.map(canonical).join(',') + ']';
     const keys = Object.keys(obj).sort();
     return '{' + keys.map((k) => JSON.stringify(k) + ':' + canonical(obj[k])).join(',') + '}';
   };
-
   const uid = () => hex(randBytes(8));
-
-  /* ───────────── hybrid logical clock ─────────────
-     String form is totally ordered: physical > logical > actor.
-     Observing a remote stamp never lets us go backwards. */
+  function u8b64(u8) {
+    let s = '';
+    for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+    return btoa(s);
+  }
+  function b64u8(s) {
+    const bin = atob(s);
+    const u = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return u;
+  }
+  function cmp(a, op, b) {
+    if (op === '==') return a === b;
+    if (op === '!=') return a !== b;
+    if (op === '>') return a > b;
+    if (op === '>=') return a >= b;
+    if (op === '<') return a < b;
+    if (op === '<=') return a <= b;
+    if (op === 'in') return Array.isArray(b) && b.indexOf(a) !== -1;
+    if (op === 'contains') return String(a).indexOf(String(b)) !== -1;
+    return false;
+  }
+  async function deriveAes(pass, saltHex) {
+    const base = await crypto.subtle.importKey('raw', te.encode(pass), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: te.encode(saltHex.slice(0, 32)), iterations: 80000, hash: 'SHA-256' },
+      base,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+  async function gzipU8(u8) {
+    if (typeof CompressionStream === 'undefined') return u8;
+    const cs = new CompressionStream('gzip');
+    const w = cs.writable.getWriter();
+    await w.write(u8);
+    await w.close();
+    return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+  }
+  async function gunzipU8(u8) {
+    if (typeof DecompressionStream === 'undefined') return u8;
+    try {
+      const ds = new DecompressionStream('gzip');
+      const w = ds.writable.getWriter();
+      await w.write(u8);
+      await w.close();
+      return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+    } catch {
+      return u8;
+    }
+  }
 
   class HLC {
     constructor(actor) {
@@ -130,11 +164,6 @@
     }
   }
 
-  /* ───────────── CRDT: LWW-Map over a signed event log ─────────────
-     State is a map key → {value, ts, actor, del}.
-     Merge is join on the (ts, actor) total order. Commutative,
-     associative, idempotent ⇒ a join-semilattice. */
-
   class Lattice {
     constructor() {
       this.state = new Map();
@@ -148,19 +177,35 @@
       if (!ev || !ev.id || this.events.has(ev.id)) return false;
       this.events.set(ev.id, ev);
       this.order.push(ev.id);
-      if (ev.op === 'set' || ev.op === 'del') {
-        const cur = this.state.get(ev.key);
-        if (!cur || ev.ts > cur.ts || (ev.ts === cur.ts && ev.actor > cur.actor)) {
-          this.state.set(ev.key, {
-            value: ev.op === 'del' ? undefined : ev.value,
-            ts: ev.ts,
-            actor: ev.actor,
-            del: ev.op === 'del'
-          });
+      if (ev.op === 'batch' && Array.isArray(ev.value)) {
+        for (const item of ev.value) {
+          if (!item || !item.length) continue;
+          this._op(item[0], item[1], item[2], ev.ts, ev.actor);
         }
+      } else if (ev.op === 'set' || ev.op === 'del') {
+        this._op(ev.op, ev.key, ev.value, ev.ts, ev.actor);
       }
       if (this.order.length > EVENT_CAP) this._gc();
       return true;
+    }
+    _op(op, key, value, ts, actor) {
+      if (!key) return;
+      const fww = key === '#genesis' || key.startsWith('~name/');
+      const cur = this.state.get(key);
+      if (fww && cur && !cur.del) return;
+      if (!cur || ts > cur.ts || (ts === cur.ts && actor > cur.actor)) {
+        this.state.set(key, {
+          value: op === 'del' ? undefined : value,
+          ts,
+          actor,
+          del: op === 'del',
+          owner: (cur && cur.owner) || actor
+        });
+      }
+    }
+    owner(key) {
+      const c = this.state.get(key);
+      return c ? c.owner : undefined;
     }
     get(key) {
       const c = this.state.get(key);
@@ -171,7 +216,7 @@
       const out = [];
       for (const [k, c] of this.state) {
         if (c.del) continue;
-        if (!prefix || k.startsWith(prefix)) out.push([k, c.value, c.ts, c.actor]);
+        if (!prefix || k.startsWith(prefix)) out.push([k, c.value, c.ts, c.actor, c.owner]);
       }
       out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
       return out;
@@ -180,9 +225,7 @@
       if (!this.order.length) return '∅';
       const ids = this.order.slice().sort();
       let h = 0;
-      for (const id of ids) {
-        for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) >>> 0;
-      }
+      for (const id of ids) for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) >>> 0;
       return h.toString(16).padStart(8, '0') + ':' + this.order.length;
     }
     missing(ids) {
@@ -209,8 +252,7 @@
       for (const id of this.order) {
         const e = this.events.get(id);
         if (!e) continue;
-        const tag = e.key + '\0' + e.ts + '\0' + e.actor;
-        if (keep.has(tag) || e.op === 'del') {
+        if (e.op === 'batch' || keep.has(e.key + '\0' + e.ts + '\0' + e.actor) || e.op === 'del') {
           next.push(id);
           nEv.set(id, e);
         }
@@ -224,76 +266,44 @@
     }
     snapshot() {
       const o = {};
-      for (const [k, c] of this.state) {
-        if (!c.del) o[k] = c.value;
-      }
+      for (const [k, c] of this.state) if (!c.del) o[k] = c.value;
       return o;
     }
   }
 
-  /* ───────────── identity (ECDSA P-256) ───────────── */
-
   async function generateIdentity() {
-    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
-      'sign',
-      'verify'
-    ]);
+    const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
     const raw = await crypto.subtle.exportKey('raw', kp.publicKey);
     const jwkPub = await crypto.subtle.exportKey('jwk', kp.publicKey);
     const jwkPriv = await crypto.subtle.exportKey('jwk', kp.privateKey);
     const fp = (await sha256(raw)).slice(0, 16);
     return { id: fp, pub: hex(raw), jwkPub, jwkPriv };
   }
-
   async function importIdentity(rec) {
-    const publicKey = await crypto.subtle.importKey(
-      'jwk',
-      rec.jwkPub,
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      true,
-      ['verify']
-    );
-    const privateKey = await crypto.subtle.importKey(
-      'jwk',
-      rec.jwkPriv,
-      { name: 'ECDSA', namedCurve: 'P-256' },
-      true,
-      ['sign']
-    );
+    const publicKey = await crypto.subtle.importKey('jwk', rec.jwkPub, { name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'verify'
+    ]);
+    const privateKey = await crypto.subtle.importKey('jwk', rec.jwkPriv, { name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign'
+    ]);
     return { id: rec.id, pub: rec.pub, publicKey, privateKey, jwkPub: rec.jwkPub, jwkPriv: rec.jwkPriv };
   }
-
   async function signBytes(priv, msg) {
-    const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, te.encode(msg));
-    return hex(sig);
+    return hex(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, priv, te.encode(msg)));
   }
-
   async function verifyBytes(pubHex, msg, sigHex) {
     try {
-      const raw = unhex(pubHex);
-      const key = await crypto.subtle.importKey(
-        'raw',
-        raw,
-        { name: 'ECDSA', namedCurve: 'P-256' },
-        true,
-        ['verify']
-      );
-      return await crypto.subtle.verify(
-        { name: 'ECDSA', hash: 'SHA-256' },
-        key,
-        unhex(sigHex),
-        te.encode(msg)
-      );
+      const key = await crypto.subtle.importKey('raw', unhex(pubHex), { name: 'ECDSA', namedCurve: 'P-256' }, true, [
+        'verify'
+      ]);
+      return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, unhex(sigHex), te.encode(msg));
     } catch {
       return false;
     }
   }
-
   function bodyOf(ev) {
     return canonical({ op: ev.op, key: ev.key, value: ev.value, ts: ev.ts, actor: ev.actor, pub: ev.pub });
   }
-
-  /* ───────────── IndexedDB ───────────── */
 
   function idbOpen(name) {
     return new Promise((resolve, reject) => {
@@ -307,15 +317,12 @@
       q.onerror = () => reject(q.error);
     });
   }
-
   function idbReq(req) {
     return new Promise((resolve, reject) => {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
   }
-
-  /* ───────────── tiny MQTT 3.1.1 client (signaling only) ───────────── */
 
   function mqttLen(n) {
     const b = [];
@@ -327,7 +334,6 @@
     } while (n > 0);
     return b;
   }
-
   function mqttStr(s) {
     const u = te.encode(s);
     const out = new Uint8Array(2 + u.length);
@@ -336,7 +342,6 @@
     out.set(u, 2);
     return out;
   }
-
   function concatU8(parts) {
     const n = parts.reduce((a, p) => a + p.length, 0);
     const u = new Uint8Array(n);
@@ -348,16 +353,16 @@
     return u;
   }
 
-  class MqttSignal {
-    constructor(url, topic, onMsg, log) {
+  class MqttBus {
+    constructor(url, log) {
       this.url = url;
-      this.topic = topic;
-      this.onMsg = onMsg;
       this.log = log;
       this.ws = null;
       this.alive = false;
       this.ping = null;
       this.cid = 'ae' + uid();
+      this.handlers = new Map();
+      this.pkt = 1;
     }
     connect() {
       return new Promise((resolve) => {
@@ -385,8 +390,7 @@
           const hdr = new Uint8Array([4, 0x02, 0x00, 0x3c]);
           const cid = mqttStr(this.cid);
           const vh = concatU8([proto, hdr, cid]);
-          const pkt = concatU8([new Uint8Array([0x10, ...mqttLen(vh.length)]), vh]);
-          this.ws.send(pkt);
+          this.ws.send(concatU8([new Uint8Array([0x10, ...mqttLen(vh.length)]), vh]));
         };
         this.ws.onmessage = (ev) => {
           const u = new Uint8Array(ev.data);
@@ -395,7 +399,6 @@
           if (type === 2) {
             clearTimeout(t);
             this.alive = true;
-            this._sub();
             this.ping = setInterval(() => {
               if (this.ws && this.ws.readyState === 1) this.ws.send(new Uint8Array([0xc0, 0]));
             }, 40000);
@@ -413,40 +416,39 @@
         };
       });
     }
-    _sub() {
-      const id = new Uint8Array([0x00, 0x01]);
-      const topic = mqttStr(this.topic);
-      const qos = new Uint8Array([0]);
-      const vh = concatU8([id, topic, qos]);
-      const pkt = concatU8([new Uint8Array([0x82, ...mqttLen(vh.length)]), vh]);
-      this.ws.send(pkt);
-    }
-    publish(obj) {
+    subscribe(topic, fn) {
+      this.handlers.set(topic, fn);
       if (!this.alive || !this.ws || this.ws.readyState !== 1) return;
-      const topic = mqttStr(this.topic);
+      const id = new Uint8Array([(this.pkt >> 8) & 255, this.pkt & 255]);
+      this.pkt = (this.pkt + 1) & 0xffff || 1;
+      const t = mqttStr(topic);
+      const vh = concatU8([id, t, new Uint8Array([0])]);
+      this.ws.send(concatU8([new Uint8Array([0x82, ...mqttLen(vh.length)]), vh]));
+    }
+    publish(topic, obj, retain) {
+      if (!this.alive || !this.ws || this.ws.readyState !== 1) return false;
+      const t = mqttStr(topic);
       const payload = te.encode(JSON.stringify(obj));
-      const vh = concatU8([topic, payload]);
-      const pkt = concatU8([new Uint8Array([0x30, ...mqttLen(vh.length)]), vh]);
-      this.ws.send(pkt);
+      const vh = concatU8([t, payload]);
+      this.ws.send(concatU8([new Uint8Array([retain ? 0x31 : 0x30, ...mqttLen(vh.length)]), vh]));
+      return true;
     }
     _pubin(u) {
       let i = 1;
-      let mul = 1;
-      let rem = 0;
       while (i < u.length) {
         const d = u[i++];
-        rem += (d & 127) * mul;
         if ((d & 128) === 0) break;
-        mul *= 128;
       }
       const qos = (u[0] & 0x06) >> 1;
       const tlen = (u[i] << 8) | u[i + 1];
       i += 2;
+      const topic = td.decode(u.slice(i, i + tlen));
       i += tlen;
       if (qos > 0) i += 2;
       try {
         const msg = JSON.parse(td.decode(u.slice(i)));
-        this.onMsg(msg);
+        const fn = this.handlers.get(topic);
+        if (fn) fn(msg);
       } catch {}
     }
     close() {
@@ -458,13 +460,11 @@
     }
   }
 
-  /* ───────────── WebRTC helpers ───────────── */
-
-  function waitIce(pc, ms = 3500) {
+  function waitIce(pc, ms) {
     if (pc.iceGatheringState === 'complete') return Promise.resolve(pc.localDescription);
     return new Promise((resolve) => {
       const done = () => resolve(pc.localDescription);
-      const t = setTimeout(done, ms);
+      const t = setTimeout(done, ms || 3500);
       pc.addEventListener('icegatheringstatechange', () => {
         if (pc.iceGatheringState === 'complete') {
           clearTimeout(t);
@@ -474,7 +474,125 @@
     });
   }
 
-  /* ───────────── Replica (the living backend) ───────────── */
+  class Query {
+    constructor(db, prefix) {
+      this.db = db;
+      this.prefix = prefix;
+      this._filters = [];
+      this._order = null;
+      this._lim = null;
+    }
+    where(field, op, value) {
+      const q = this._clone();
+      q._filters.push({ field, op, value });
+      return q;
+    }
+    orderBy(field, dir) {
+      const q = this._clone();
+      q._order = { field, dir: dir || 'asc' };
+      return q;
+    }
+    limit(n) {
+      const q = this._clone();
+      q._lim = n;
+      return q;
+    }
+    _clone() {
+      const q = new Query(this.db, this.prefix);
+      q._filters = this._filters.slice();
+      q._order = this._order;
+      q._lim = this._lim;
+      return q;
+    }
+    get() {
+      return this._run();
+    }
+    on(fn) {
+      fn(this._run());
+      return this.db.watch(this.prefix, () => fn(this._run()));
+    }
+    _run() {
+      let rows = this.db.scan(this.prefix).map(([k, v, ts, actor]) => ({
+        id: k.slice(this.prefix.length),
+        key: k,
+        data: v,
+        ts,
+        actor
+      }));
+      for (const f of this._filters) rows = rows.filter((r) => cmp(r.data && r.data[f.field], f.op, f.value));
+      if (this._order) {
+        const { field, dir } = this._order;
+        rows.sort((a, b) => {
+          const x = a.data && a.data[field];
+          const y = b.data && b.data[field];
+          if (x < y) return dir === 'desc' ? 1 : -1;
+          if (x > y) return dir === 'desc' ? -1 : 1;
+          return 0;
+        });
+      }
+      if (this._lim != null) rows = rows.slice(0, this._lim);
+      return rows;
+    }
+  }
+
+  class DocRef {
+    constructor(db, path, id) {
+      this.db = db;
+      this.path = path;
+      this.id = id;
+    }
+    async set(data) {
+      await this.db.set(this.path, data);
+      return this.id;
+    }
+    async update(patch) {
+      const cur = this.db.get(this.path);
+      const base = cur && typeof cur === 'object' && !Array.isArray(cur) ? cur : {};
+      await this.db.set(this.path, Object.assign({}, base, patch));
+      return this.id;
+    }
+    get() {
+      return this.db.get(this.path);
+    }
+    async delete() {
+      await this.db.del(this.path);
+    }
+    on(fn) {
+      fn(this.get());
+      return this.db.watch(this.path, (_k, v) => fn(v));
+    }
+  }
+
+  class Collection {
+    constructor(db, name) {
+      this.db = db;
+      this.name = name;
+      this.prefix = '@/' + name + '/';
+    }
+    doc(id) {
+      return new DocRef(this.db, this.prefix + id, id);
+    }
+    async add(data) {
+      const id = uid();
+      await this.doc(id).set(data);
+      return id;
+    }
+    where(field, op, value) {
+      return new Query(this.db, this.prefix).where(field, op, value);
+    }
+    orderBy(field, dir) {
+      return new Query(this.db, this.prefix).orderBy(field, dir);
+    }
+    limit(n) {
+      return new Query(this.db, this.prefix).limit(n);
+    }
+    get() {
+      return new Query(this.db, this.prefix).get();
+    }
+    on(fn) {
+      return new Query(this.db, this.prefix).on(fn);
+    }
+  }
 
   class Replica {
     constructor(ns, opts) {
@@ -499,18 +617,43 @@
       this.bc = null;
       this.closed = false;
       this.ready = false;
-      this.stats = {
-        events: 0,
-        gossip: 0,
-        tracker: 0,
-        webrtc: 0,
-        mqtt: 0,
-        started: Date.now()
-      };
+      this.stats = { events: 0, gossip: 0, tracker: 0, webrtc: 0, mqtt: 0, keep: 0, started: Date.now() };
       this.logLines = [];
       this._chunkBuf = new Map();
       this._announceTimer = null;
       this._presenceTimer = null;
+      this._keepTimer = null;
+      this._plain = new Map();
+      this.aes = null;
+      this.rules = this.opts.rules || { '*': { read: true, write: true } };
+      this.sigTopic = '';
+      this.keepTopic = '';
+      const self = this;
+      this.files = {
+        put: (x) => self._filePut(x),
+        get: (h) => self._fileGet(h)
+      };
+      this.auth = {
+        me: () => (self.actor ? { id: self.actor.id, pub: self.actor.pub } : null),
+        name: () => {
+          const r = self.get('~actor/' + (self.actor && self.actor.id));
+          return r && r.name;
+        },
+        claim: (n) => self._claim(n),
+        exportSeed: () =>
+          JSON.stringify({
+            id: self.actor.id,
+            pub: self.actor.pub,
+            jwkPub: self.actor.jwkPub,
+            jwkPriv: self.actor.jwkPriv
+          }),
+        importSeed: (s) => self._importSeed(s),
+        whois: (n) => self.get('~name/' + String(n).toLowerCase()),
+        founder: () => {
+          const g = self.get('#genesis');
+          return g && g.founder;
+        }
+      };
     }
 
     log(msg) {
@@ -519,7 +662,6 @@
       if (this.logLines.length > 200) this.logLines.shift();
       this._emitStatus('log', line);
     }
-
     _emitStatus(type, extra) {
       const snap = this.status();
       for (const fn of this.statusWatch) {
@@ -528,34 +670,28 @@
         } catch {}
       }
     }
-
     status() {
       const live = [...this.peers.values()].filter((p) => p.open);
       return {
         version: VERSION,
         ns: this.ns,
         actor: this.actor && this.actor.id,
-        peers: live.map((p) => ({
-          id: p.actor || p.trackerId,
-          via: p.via,
-          open: p.open
-        })),
+        peers: live.map((p) => ({ id: p.actor || p.trackerId, via: p.via, open: p.open })),
         peerCount: live.length,
         events: this.lattice.order.length,
         keys: [...this.lattice.state.values()].filter((c) => !c.del).length,
         merkle: this.lattice.merkle(),
         servers: 0,
+        encrypted: !!this.aes,
         theorem: 'Ω = ⊔ replicas  (join-semilattice)',
-        stats: { ...this.stats },
+        stats: Object.assign({}, this.stats),
         log: this.logLines.slice(-40)
       };
     }
-
     onStatus(fn) {
       this.statusWatch.add(fn);
       return () => this.statusWatch.delete(fn);
     }
-
     watch(prefix, fn) {
       const w = { prefix: prefix || '', fn };
       this.watchers.add(w);
@@ -564,8 +700,7 @@
 
     async open() {
       this.nsHash = await sha256('aether:ns:' + this.ns);
-      const ih = unhex(this.nsHash.slice(0, 40));
-      this.infoHashBin = binary20(ih);
+      this.infoHashBin = binary20(unhex(this.nsHash.slice(0, 40)));
       const pid = randBytes(20);
       pid[0] = '-'.charCodeAt(0);
       pid[1] = 'A'.charCodeAt(0);
@@ -575,6 +710,13 @@
       pid[5] = '-'.charCodeAt(0);
       this.peerIdBin = binary20(pid);
       this.peerIdHex = hex(pid);
+      this.sigTopic = 'aether/v1/' + this.nsHash.slice(0, 40) + '/sig';
+      this.keepTopic = 'aether/v1/' + this.nsHash.slice(0, 40) + '/keep';
+
+      if (this.opts.passphrase) {
+        this.aes = await deriveAes(this.opts.passphrase, this.nsHash);
+        this.log('passphrase cipher on');
+      }
 
       if (this.opts.persist !== false && typeof indexedDB !== 'undefined') {
         try {
@@ -583,7 +725,6 @@
           this.log('idb unavailable');
         }
       }
-
       if (this.idb) {
         const rec = await idbReq(this.idb.transaction('kv').objectStore('kv').get('identity'));
         if (rec && rec.jwkPriv) {
@@ -598,8 +739,7 @@
         const gen = await generateIdentity();
         this.actor = await importIdentity(gen);
         if (this.idb) {
-          const tx = this.idb.transaction('kv', 'readwrite');
-          tx.objectStore('kv').put(
+          this.idb.transaction('kv', 'readwrite').objectStore('kv').put(
             { id: gen.id, pub: gen.pub, jwkPub: gen.jwkPub, jwkPriv: gen.jwkPriv },
             'identity'
           );
@@ -612,8 +752,7 @@
         const all = await idbReq(this.idb.transaction('events').objectStore('events').getAll());
         if (all && all.length) {
           all.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
-          for (const ev of all) this.lattice.apply(ev);
-          this.stats.events = this.lattice.order.length;
+          for (const ev of all) await this._ingest(ev, true, true);
           this.log('rehydrated ' + all.length + ' events from this browser');
         }
       }
@@ -623,9 +762,15 @@
         this._bindTrackers(this.opts.trackers || DEFAULT_TRACKERS);
         this._bindMqtt(this.opts.mqtt || DEFAULT_MQTT);
       }
-      this._presenceTimer = setInterval(() => this._beat(), 12000);
-      this._beat();
       this.ready = true;
+      this._presenceTimer = setInterval(() => this._beat(), 12000);
+      this._keepTimer = setInterval(() => this._publishKeep(), 40000);
+      await this._beat();
+      if (!this.get('#genesis')) {
+        await this.set('#genesis', { founder: this.actor.id, at: Date.now(), v: VERSION });
+      }
+      const published = this.get('#rules');
+      if (published && typeof published === 'object') this.rules = Object.assign({}, this.rules, published);
       this._emitStatus('open');
       return this;
     }
@@ -646,14 +791,19 @@
           actor: 'tabs',
           send: (m) => this._bcSend(m)
         });
-        this._bcSend({ t: 'HELLO', from: this.actor.id, pub: this.actor.pub, have: this.lattice.allIds(), merkle: this.lattice.merkle() });
+        this._bcSend({
+          t: 'HELLO',
+          from: this.actor.id,
+          pub: this.actor.pub,
+          have: this.lattice.allIds(),
+          merkle: this.lattice.merkle()
+        });
       } catch {}
     }
-
     _bcSend(msg) {
       if (!this.bc) return;
       try {
-        this.bc.postMessage({ ...msg, from: this.actor.id });
+        this.bc.postMessage(Object.assign({}, msg, { from: this.actor.id }));
       } catch {}
     }
 
@@ -663,7 +813,6 @@
         for (const tr of this.trackers) this._announce(tr, false);
       }, 55000);
     }
-
     _tracker(url) {
       let ws;
       try {
@@ -683,13 +832,9 @@
       ws.onmessage = (ev) => {
         let data = ev.data;
         if (data instanceof ArrayBuffer) data = td.decode(data);
-        let msg;
         try {
-          msg = JSON.parse(data);
-        } catch {
-          return;
-        }
-        this._onTracker(tr, msg);
+          this._onTracker(tr, JSON.parse(data));
+        } catch {}
       };
       ws.onclose = () => {
         tr.ready = false;
@@ -702,7 +847,6 @@
       };
       ws.onerror = () => {};
     }
-
     async _announce(tr, started) {
       if (!tr.ready || tr.ws.readyState !== 1) return;
       const live = [...this.peers.values()].filter((p) => p.open && p.via === 'webrtc').length;
@@ -713,11 +857,7 @@
         for (let i = 0; i < n; i++) {
           try {
             const off = await this._makeOffer();
-            if (off)
-              offers.push({
-                offer_id: off.offerIdBin,
-                offer: { type: 'offer', sdp: off.sdp }
-              });
+            if (off) offers.push({ offer_id: off.offerIdBin, offer: { type: 'offer', sdp: off.sdp } });
           } catch {}
         }
       }
@@ -736,7 +876,6 @@
         tr.ws.send(JSON.stringify(payload));
       } catch {}
     }
-
     async _makeOffer() {
       if (this.pcs.size >= MAX_PEERS + 6) return null;
       const pc = new RTCPeerConnection(this.opts.rtcConfig || ICE);
@@ -757,7 +896,6 @@
       this.pendingOffers.set(offerIdBin, pc);
       return { offerIdHex, offerIdBin, sdp, pc };
     }
-
     _setupPc(pc, ch, tag, trackerPeer) {
       const rec = {
         pc,
@@ -766,12 +904,15 @@
         via: 'webrtc',
         actor: null,
         trackerId: trackerPeer,
-        buf: '',
         send: (m) => this._dcSend(rec, m)
       };
       this.pcs.set(tag, rec);
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+        if (
+          pc.connectionState === 'failed' ||
+          pc.connectionState === 'closed' ||
+          pc.connectionState === 'disconnected'
+        ) {
           this._dropPc(tag, rec);
         }
       };
@@ -798,7 +939,6 @@
       if (ch) attach(ch);
       pc.ondatachannel = (e) => attach(e.channel);
     }
-
     _dropPc(tag, rec) {
       rec.open = false;
       this.peers.delete(tag);
@@ -808,7 +948,6 @@
       } catch {}
       this._emitStatus('peer');
     }
-
     _dcSend(rec, msg) {
       if (!rec.ch || rec.ch.readyState !== 'open') return;
       const s = JSON.stringify(msg);
@@ -818,11 +957,9 @@
       }
       const id = uid();
       const n = Math.ceil(s.length / CHUNK);
-      for (let k = 0; k < n; k++) {
+      for (let k = 0; k < n; k++)
         rec.ch.send(JSON.stringify({ t: '_chk', id, k, n, d: s.slice(k * CHUNK, (k + 1) * CHUNK) }));
-      }
     }
-
     _onDc(rec, data) {
       let msg;
       try {
@@ -847,7 +984,6 @@
       }
       this._onWire(msg, rec);
     }
-
     async _onTracker(tr, msg) {
       if (msg.info_hash && binToHex20(msg.info_hash) !== this.nsHash.slice(0, 40) && msg.info_hash !== this.infoHashBin)
         return;
@@ -855,22 +991,18 @@
         if (msg.peer_id === this.peerIdBin) return;
         try {
           await this._acceptOffer(tr, msg);
-        } catch (e) {
+        } catch {
           this.log('offer fail');
         }
       }
       if (msg.answer && msg.offer_id != null) {
-        const pc =
-          this.pendingOffers.get(msg.offer_id) ||
-          this.pendingOffers.get(binToHex20(msg.offer_id)) ||
-          this.pendingOffers.get(hex(typeof msg.offer_id === 'string' ? te.encode(msg.offer_id).slice(0, 20) : []));
+        const pc = this.pendingOffers.get(msg.offer_id) || this.pendingOffers.get(binToHex20(msg.offer_id));
         if (!pc) return;
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
         } catch {}
       }
     }
-
     async _acceptOffer(tr, msg) {
       if (this.pcs.size >= MAX_PEERS + 8) return;
       const pc = new RTCPeerConnection(this.opts.rtcConfig || ICE);
@@ -892,29 +1024,25 @@
     }
 
     _bindMqtt(urls) {
-      const topic = 'aether/v1/' + this.nsHash.slice(0, 40) + '/sig';
       for (const url of urls) {
-        const m = new MqttSignal(
-          url,
-          topic,
-          (msg) => this._onMqttSig(msg),
-          (s) => this.log(s)
-        );
-        m.connect().then((ok) => {
+        const bus = new MqttBus(url, (s) => this.log(s));
+        bus.connect().then((ok) => {
           if (!ok) return;
-          this.mqtt.push(m);
+          this.mqtt.push(bus);
           this.stats.mqtt++;
-          this._mqttOffer(m);
+          bus.subscribe(this.sigTopic, (msg) => this._onMqttSig(msg, bus));
+          bus.subscribe(this.keepTopic, (msg) => this._onKeep(msg));
+          this._mqttOffer(bus);
+          this._publishKeep();
           this._emitStatus('mqtt');
         });
       }
     }
-
-    async _mqttOffer(m) {
+    async _mqttOffer(bus) {
       try {
         const off = await this._makeOffer();
         if (!off) return;
-        m.publish({
+        bus.publish(this.sigTopic, {
           k: 'offer',
           from: this.peerIdHex,
           actor: this.actor.id,
@@ -923,8 +1051,7 @@
         });
       } catch {}
     }
-
-    async _onMqttSig(msg) {
+    async _onMqttSig(msg, bus) {
       if (!msg || msg.from === this.peerIdHex) return;
       const sigId = msg.k + ':' + (msg.offer_id || '') + ':' + (msg.from || '');
       if (this.seenSignal.has(sigId)) return;
@@ -940,7 +1067,7 @@
           await pc.setLocalDescription(answer);
           await waitIce(pc);
           for (const m of this.mqtt)
-            m.publish({
+            m.publish(this.sigTopic, {
               k: 'answer',
               from: this.peerIdHex,
               to: msg.from,
@@ -957,6 +1084,45 @@
         } catch {}
       }
     }
+    async _publishKeep() {
+      if (!this.mqtt.length || this.closed) return;
+      const merkle = this.lattice.merkle();
+      if (merkle === this._keepMerkle) return;
+      const events = [...this.lattice.events.values()];
+      const raw = te.encode(JSON.stringify({ v: 1, ns: this.ns, merkle, events }));
+      let body;
+      try {
+        body = { k: 'keep', from: this.actor.id, merkle, z: u8b64(await gzipU8(raw)) };
+      } catch {
+        body = { k: 'keep', from: this.actor.id, merkle, events };
+      }
+      const s = JSON.stringify(body);
+      if (s.length > KEEP_MAX) {
+        this.log('keeper skip (lattice too large for public retain)');
+        return;
+      }
+      for (const m of this.mqtt) m.publish(this.keepTopic, body, true);
+      this._keepMerkle = merkle;
+      this.stats.keep++;
+      this.log('keeper snapshot ' + merkle);
+    }
+    async _onKeep(msg) {
+      if (!msg || msg.k !== 'keep') return;
+      if (msg.from === this.actor.id) return;
+      if (msg.merkle && msg.merkle === this.lattice.merkle()) return;
+      let events = msg.events;
+      if (!events && msg.z) {
+        try {
+          events = JSON.parse(td.decode(await gunzipU8(b64u8(msg.z)))).events;
+        } catch {
+          return;
+        }
+      }
+      if (!events || !events.length) return;
+      this.log('keeper hydrate ' + events.length);
+      for (const ev of events) await this._ingest(ev, false);
+      this._emitStatus('sync');
+    }
 
     async _onWire(msg, rec) {
       if (!msg || !msg.t) return;
@@ -966,8 +1132,8 @@
         this.stats.gossip++;
         const miss = this.lattice.missing(msg.have || []);
         const theyNeed = (this.lattice.allIds() || []).filter((id) => !(msg.have || []).includes(id));
-        if (theyNeed.length) rec.send({ t: 'EVENTS', es: this.lattice.dump(theyNeed.slice(0, 400)) });
-        if (miss.length) rec.send({ t: 'WANT', ids: miss.slice(0, 400) });
+        if (theyNeed.length) rec.send({ t: 'EVENTS', es: this.lattice.dump(theyNeed.slice(0, 500)) });
+        if (miss.length) rec.send({ t: 'WANT', ids: miss.slice(0, 500) });
         this._emitStatus('peer');
         return;
       }
@@ -987,47 +1153,153 @@
       if (msg.t === 'PING') rec.send({ t: 'PONG', n: msg.n });
     }
 
-    async _ingest(ev, local) {
+    _match(pat, key) {
+      const keys = key.startsWith('@/') ? [key, key.slice(2)] : [key];
+      for (const k of keys) {
+        if (pat === k || pat === '*') return true;
+        if (pat.endsWith('/*') && k.startsWith(pat.slice(0, -1))) return true;
+        const a = pat.split('/');
+        const b = k.split('/');
+        if (a.length !== b.length) continue;
+        let ok = true;
+        for (let i = 0; i < a.length; i++) {
+          if (a[i][0] === ':' || a[i] === '*') continue;
+          if (a[i] !== b[i]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return true;
+      }
+      return false;
+    }
+    _ruleFor(key) {
+      const rules = Object.assign({}, this.rules, this.get('#rules') || {});
+      let best = rules['*'] || { read: true, write: true };
+      let bestLen = -1;
+      for (const [pat, rule] of Object.entries(rules)) {
+        if (pat === '*') continue;
+        if (this._match(pat, key) && pat.length > bestLen) {
+          best = rule;
+          bestLen = pat.length;
+        }
+      }
+      return best;
+    }
+    _canWrite(key, actor) {
+      if (key.startsWith('#p/') || key.startsWith('#c/') || key.startsWith('#l/') || key.startsWith('#f/')) return true;
+      if (key === '#genesis' || key.startsWith('~name/') || key.startsWith('~actor/')) return true;
+      if (key === '#rules') {
+        const g = this.get('#genesis');
+        return !g || g.founder === actor;
+      }
+      const rule = this._ruleFor(key);
+      const w = rule.write;
+      if (w === false) return false;
+      if (w === true || w == null) return true;
+      if (w === 'auth') return !!actor;
+      if (w === 'founder') {
+        const g = this.get('#genesis');
+        return g && g.founder === actor;
+      }
+      if (w === 'owner') {
+        const own = this.lattice.owner(key);
+        return !own || own === actor;
+      }
+      return true;
+    }
+    async _encrypt(v) {
+      if (!this.aes) return v;
+      const iv = randBytes(12);
+      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.aes, te.encode(JSON.stringify(v)));
+      return { _enc: true, iv: hex(iv), ct: hex(ct) };
+    }
+    async _decrypt(v) {
+      if (!v || !v._enc) return v;
+      if (!this.aes) return v;
+      try {
+        const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unhex(v.iv) }, this.aes, unhex(v.ct));
+        return JSON.parse(td.decode(pt));
+      } catch {
+        return v;
+      }
+    }
+    async _cachePlain(key) {
+      const raw = this.lattice.get(key);
+      if (raw === undefined) this._plain.delete(key);
+      else this._plain.set(key, await this._decrypt(raw));
+    }
+
+    async _ingest(ev, local, fromStore) {
       if (!ev || !ev.id) return false;
       if (this.lattice.has(ev.id)) return false;
-      if (!local) {
+      if (!local && !fromStore) {
         if (!ev.sig || !ev.pub || !ev.actor) return false;
         const ok = await verifyBytes(ev.pub, bodyOf(ev), ev.sig);
         if (!ok) {
           this.log('drop unsigned/forged event');
           return false;
         }
+        const keys = ev.op === 'batch' && Array.isArray(ev.value) ? ev.value.map((x) => x[1]) : [ev.key];
+        for (const k of keys) {
+          if (k && !this._canWrite(k, ev.actor)) {
+            this.log('drop rule-denied ' + k);
+            return false;
+          }
+        }
       }
       if (ev.ts) this.hlc.observe(ev.ts);
       const applied = this.lattice.apply(ev);
       if (!applied) return false;
       this.stats.events = this.lattice.order.length;
-      if (this.idb) {
+      if (ev.op === 'batch' && Array.isArray(ev.value)) {
+        for (const item of ev.value) if (item && item[1]) await this._cachePlain(item[1]);
+      } else if (ev.key) await this._cachePlain(ev.key);
+      if (ev.key === '#rules') {
+        const r = this.get('#rules');
+        if (r && typeof r === 'object') this.rules = Object.assign({}, this.rules, r);
+      }
+      if (this.idb && !fromStore) {
         try {
           this.idb.transaction('events', 'readwrite').objectStore('events').put(ev);
         } catch {}
       }
       for (const w of this.watchers) {
-        if (!w.prefix || (ev.key && ev.key.startsWith(w.prefix))) {
-          try {
-            w.fn(ev.key, ev.op === 'del' ? undefined : this.lattice.get(ev.key), ev);
-          } catch {}
+        const keys = ev.op === 'batch' && Array.isArray(ev.value) ? ev.value.map((x) => x[1]) : [ev.key];
+        for (const k of keys) {
+          if (!w.prefix || (k && k.startsWith(w.prefix))) {
+            try {
+              w.fn(k, ev.op === 'del' ? undefined : this.get(k), ev);
+            } catch {}
+          }
         }
       }
       this._emitStatus('change', ev);
       return true;
     }
-
     _gossip(ev) {
       const msg = { t: 'EVENT', e: ev, from: this.actor.id };
       this._bcSend(msg);
-      for (const rec of this.peers.values()) {
-        if (rec.via === 'webrtc' && rec.open) rec.send(msg);
-      }
+      for (const rec of this.peers.values()) if (rec.via === 'webrtc' && rec.open) rec.send(msg);
     }
 
     async mutate(op, key, value) {
-      if (!this.ready) throw new Error('aether not open');
+      if (!this.ready && op !== 'set') {
+        /* genesis during open */
+      }
+      if (key && !this._canWrite(String(key), this.actor.id)) throw new Error('write denied by rules: ' + key);
+      if (op === 'batch' && Array.isArray(value)) {
+        for (const item of value) {
+          if (item[1] && !this._canWrite(String(item[1]), this.actor.id))
+            throw new Error('write denied by rules: ' + item[1]);
+        }
+        const next = [];
+        for (const item of value) {
+          if (item[0] === 'set' && this.aes) next.push(['set', item[1], await this._encrypt(item[2])]);
+          else next.push(item);
+        }
+        value = next;
+      } else if (op === 'set' && this.aes) value = await this._encrypt(value);
       const ts = this.hlc.stamp();
       const ev = {
         op,
@@ -1043,30 +1315,42 @@
       this._gossip(ev);
       return ev;
     }
-
     async set(key, value) {
       await this.mutate('set', key, value);
       return value;
+    }
+    async update(key, patch) {
+      const cur = this.get(key);
+      const base = cur && typeof cur === 'object' && !Array.isArray(cur) ? cur : {};
+      return this.set(key, Object.assign({}, base, patch));
     }
     async del(key) {
       await this.mutate('del', key);
     }
     get(key) {
+      if (this._plain.has(key)) return this._plain.get(key);
       return this.lattice.get(key);
     }
     has(key) {
-      return this.lattice.get(key) !== undefined;
+      return this.get(key) !== undefined;
     }
     keys(prefix) {
-      return this.lattice.scan(prefix).map((x) => x[0]);
+      return this.scan(prefix).map((x) => x[0]);
     }
     scan(prefix) {
-      return this.lattice.scan(prefix);
+      return this.lattice.scan(prefix).map(([k, v, ts, actor, owner]) => [
+        k,
+        this._plain.has(k) ? this._plain.get(k) : v,
+        ts,
+        actor,
+        owner
+      ]);
     }
     all() {
-      return this.lattice.snapshot();
+      const o = {};
+      for (const [k] of this.scan()) o[k] = this.get(k);
+      return o;
     }
-
     async inc(key, n) {
       const n0 = typeof n === 'number' ? n : 1;
       const ck = '#c/' + key + '/' + this.actor.id;
@@ -1076,49 +1360,153 @@
     }
     count(key) {
       let s = 0;
-      const p = '#c/' + key + '/';
-      for (const [k, v] of this.lattice.scan(p)) s += Number(v) || 0;
+      for (const [, v] of this.scan('#c/' + key + '/')) s += Number(v) || 0;
       return s;
     }
-
     async append(key, value) {
-      const id = uid();
-      const k = '#l/' + key + '/' + Date.now().toString(36) + '-' + id;
+      const k = '#l/' + key + '/' + Date.now().toString(36) + '-' + uid();
       await this.set(k, value);
       return k;
     }
     tail(key, n) {
-      const p = '#l/' + key + '/';
-      const rows = this.lattice.scan(p);
+      const rows = this.scan('#l/' + key + '/');
       const m = n == null ? rows.length : n;
       return rows.slice(-m).map(([k, v, ts, actor]) => ({ key: k, value: v, ts, actor }));
     }
-
+    col(name) {
+      return new Collection(this, name);
+    }
+    query(prefix) {
+      return new Query(this, prefix || '');
+    }
+    async batch(ops) {
+      return this.mutate('batch', '#batch/' + uid(), ops);
+    }
+    async protect(rules) {
+      await this.set('#rules', rules);
+      this.rules = Object.assign({}, this.rules, rules);
+      return rules;
+    }
+    async _claim(name) {
+      const n = String(name)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_\-.]/g, '')
+        .slice(0, 32);
+      if (!n) throw new Error('bad name');
+      const k = '~name/' + n;
+      const cur = this.get(k);
+      if (cur && cur.id !== this.actor.id) throw new Error('name taken');
+      await this.set(k, { id: this.actor.id, pub: this.actor.pub });
+      await this.set('~actor/' + this.actor.id, { name: n });
+      return n;
+    }
+    async _importSeed(s) {
+      const rec = typeof s === 'string' ? JSON.parse(s) : s;
+      this.actor = await importIdentity(rec);
+      this.hlc = new HLC(this.actor.id);
+      if (this.idb)
+        this.idb.transaction('kv', 'readwrite').objectStore('kv').put(
+          { id: rec.id, pub: rec.pub, jwkPub: rec.jwkPub, jwkPriv: rec.jwkPriv },
+          'identity'
+        );
+      this.log('imported identity ' + this.actor.id);
+      return this.actor.id;
+    }
+    async _filePut(input) {
+      let buf;
+      let type = 'application/octet-stream';
+      let name = 'blob';
+      if (typeof Blob !== 'undefined' && input instanceof Blob) {
+        buf = new Uint8Array(await input.arrayBuffer());
+        type = input.type || type;
+        name = input.name || name;
+      } else if (typeof input === 'string') {
+        buf = te.encode(input);
+        type = 'text/plain';
+      } else {
+        buf = te.encode(JSON.stringify(input));
+        type = 'application/json';
+      }
+      if (buf.length > 2000000) throw new Error('file too large (2MB)');
+      const hash = await sha256(buf);
+      const size = 8000;
+      const n = Math.ceil(buf.length / size) || 1;
+      const ops = [['set', '#f/' + hash + '/_', { n, type, size: buf.length, name }]];
+      for (let i = 0; i < n; i++) ops.push(['set', '#f/' + hash + '/' + i, u8b64(buf.subarray(i * size, (i + 1) * size))]);
+      await this.batch(ops);
+      return hash;
+    }
+    async _fileGet(hash) {
+      const meta = this.get('#f/' + hash + '/_');
+      if (!meta) return null;
+      const parts = [];
+      for (let i = 0; i < meta.n; i++) {
+        const b64 = this.get('#f/' + hash + '/' + i);
+        if (b64 == null) return null;
+        parts.push(b64u8(b64));
+      }
+      const u = concatU8(parts);
+      if (typeof Blob === 'undefined') return { bytes: u, type: meta.type, name: meta.name };
+      const blob = new Blob([u], { type: meta.type });
+      blob.name = meta.name;
+      return blob;
+    }
+    exportCapsule() {
+      return {
+        v: 1,
+        ns: this.ns,
+        merkle: this.lattice.merkle(),
+        events: [...this.lattice.events.values()]
+      };
+    }
+    async importCapsule(c) {
+      const cap = typeof c === 'string' ? JSON.parse(c) : c;
+      if (!cap || !cap.events) throw new Error('bad capsule');
+      let n = 0;
+      for (const ev of cap.events) if (await this._ingest(ev, false)) n++;
+      this._gossip && this._emitStatus('sync');
+      this.log('capsule ingested ' + n);
+      return n;
+    }
+    waitSync(ms) {
+      const timeout = ms == null ? 5000 : ms;
+      const start = this.lattice.merkle();
+      return new Promise((resolve) => {
+        const t0 = Date.now();
+        const iv = setInterval(() => {
+          const m = this.lattice.merkle();
+          const peers = this.presence().length;
+          if ((m !== start && Date.now() - t0 > 800) || Date.now() - t0 > timeout || peers > 1) {
+            clearInterval(iv);
+            resolve(this.status());
+          }
+        }, 250);
+      });
+    }
     async _beat() {
-      if (!this.ready || this.closed) return;
+      if (this.closed || !this.actor) return;
       await this.set('#p/' + this.actor.id, {
         at: Date.now(),
         origin: typeof location !== 'undefined' ? location.host : '',
         v: VERSION
       });
     }
-
     presence(ms) {
       const windowMs = ms || 35000;
       const now = Date.now();
       const out = [];
-      for (const [k, v] of this.lattice.scan('#p/')) {
-        if (v && typeof v.at === 'number' && now - v.at < windowMs) {
+      for (const [k, v] of this.scan('#p/')) {
+        if (v && typeof v.at === 'number' && now - v.at < windowMs)
           out.push({ actor: k.slice(3), at: v.at, origin: v.origin });
-        }
       }
       return out;
     }
-
     async close() {
       this.closed = true;
       clearInterval(this._announceTimer);
       clearInterval(this._presenceTimer);
+      clearInterval(this._keepTimer);
       try {
         this.bc && this.bc.close();
       } catch {}
@@ -1136,8 +1524,6 @@
     }
   }
 
-  /* ───────────── the theorem, executed ───────────── */
-
   function cloneLat(src) {
     const L = new Lattice();
     for (const ev of src.events.values()) L.apply(JSON.parse(JSON.stringify(ev)));
@@ -1151,7 +1537,6 @@
   function snapEq(a, b) {
     return canonical(a.snapshot()) === canonical(b.snapshot());
   }
-
   function theorem() {
     const e = (id, key, value, ts, actor) => ({
       id,
@@ -1174,19 +1559,16 @@
     const BA = mergeLat(B, A);
     const commutative = snapEq(AB, BA);
     const ABC = mergeLat(AB, C);
-    const BC = mergeLat(B, C);
-    const A_BC = mergeLat(A, BC);
+    const A_BC = mergeLat(A, mergeLat(B, C));
     const associative = snapEq(ABC, A_BC);
-    const AA = mergeLat(A, A);
-    const idempotent = snapEq(AA, A);
-    const lub = ABC.snapshot();
+    const idempotent = snapEq(mergeLat(A, A), A);
     return {
       commutative,
       associative,
       idempotent,
       holds: commutative && associative && idempotent,
-      lub,
-      note: 'LWW-Map is a join-semilattice on (timestamp, actor). Ω = ⊔ replicas. Divergence is temporary; the least upper bound is unique.'
+      lub: ABC.snapshot(),
+      note: 'LWW-Map is a join-semilattice on (timestamp, actor). Ω = ⊔ replicas.'
     };
   }
 
@@ -1203,6 +1585,8 @@
     version: VERSION,
     Lattice,
     HLC,
+    Collection,
+    Query,
     canonical,
     sha256,
     trackers: DEFAULT_TRACKERS,

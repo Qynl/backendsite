@@ -40,6 +40,7 @@
       <a href="#live">live</a>
       <a href="#theorem">theorem</a>
       <a href="#hitch">hitch a site</a>
+      <a href="README.md">readme</a>
       <a href="elsewhere.html">elsewhere →</a>
     </nav>
   </header>
@@ -179,31 +180,45 @@
     </section>
 
     <section class="plate" id="hitch">
-      <p class="plate-num">Plate V · hitch any website to the lattice</p>
+      <p class="plate-num">Plate V · hitch any website — exact steps</p>
       <h2>One script.<br />Any origin.</h2>
       <p class="sub">
-        WebRTC does not care what domain you are on. The namespace is hashed
-        to a 20-byte infohash. Two shops, a game, a blog — if they open the
-        same name, they are the same backend. Knowledge of the name is the
-        capability. Pick an unguessable one.
+        This is the whole vendor relationship. There is no dashboard.
+        Do these steps on a shop, a game, a blog — they become one backend
+        if they open the same name.
       </p>
+
+      <ol class="steps">
+        <li>
+          <b>Put <code>aether.js</code> on the site</b>
+          Copy the file next to your HTML, or hotlink the URL below. CORS is already <code>*</code>. It is a static file, not an API.
+        </li>
+        <li>
+          <b>Invent a secret namespace</b>
+          Long, random, unpublished. The string is the database URL, the API key, and the lock. Optional: add <code>passphrase</code> so even swarm lurkers see only AES-GCM ciphertext.
+        </li>
+        <li>
+          <b>Open it instead of Firebase</b>
+          <code>const db = await Aether.open('your-secret')</code>. That is <code>initializeApp</code> + <code>getFirestore</code> + auth, in one call.
+        </li>
+        <li>
+          <b>Read and write</b>
+          Collections <code>db.col('users').doc(id).set(data)</code>, live queries <code>.where().on()</code>, counters, files, rules, capsules. Full map is in <a href="README.md">README.md</a>.
+        </li>
+        <li>
+          <b>Hitch the next website</b>
+          Different origin, same <code>aether.js</code>, <em>same namespace string</em>. WebRTC does not care what domain you are on. Proof: <a href="elsewhere.html">elsewhere</a>.
+        </li>
+        <li>
+          <b>Check the network tab</b>
+          Static files, torrent trackers, MQTT, STUN. No fetch to a vendor of yours. If that list is all you see, you did it.
+        </li>
+      </ol>
+
       <div class="grid-2">
         <div>
-          <pre class="snip" id="snip">&lt;script src="<span id="origin">./aether.js</span>"&gt;&lt;/script&gt;
-&lt;script&gt;
-  const db = await Aether.open('my-secret-universe');
-
-  await db.set('user/ada', { year: 1843 });
-  await db.inc('signups', 1);
-  await db.append('audit', { what: 'hello' });
-
-  db.watch('', (key, value) => console.log(key, value));
-
-  db.get('user/ada');
-  db.count('signups');
-  db.tail('audit', 20);
-  db.peers; // living mesh
-&lt;/script&gt;</pre>
+          <pre class="snip" id="snip"></pre>
+          <span id="origin" hidden>./aether.js</span>
           <p style="margin-top:12px">
             <button class="copy" id="copy">copy the hitch</button>
             &nbsp;
@@ -211,19 +226,22 @@
           </p>
         </div>
         <div>
-          <h3>API, such as it is</h3>
-          <p class="muted">
-            <code>open(ns)</code> · <code>set/get/del</code> · <code>scan(prefix)</code> ·
-            <code>inc/count</code> · <code>append/tail</code> · <code>watch</code> ·
-            <code>presence</code> · <code>status</code> · <code>onStatus</code>.
-            Counters are actor-registers summed on read. Logs are timestamped
-            keys. Everything else is an LWW register. Persistence is IndexedDB
-            in each replica. When the last browser closes, the last copy sleeps
-            there until it reopens and gossips.
-          </p>
-          <p class="muted">
-            Optional: pass <code>{ passphrase }</code> is not required — secrecy
-            is the namespace. Treat it like a bearer token the size of a poem.
+          <h3>Versus a rented backend</h3>
+          <table class="cmp">
+            <thead><tr><th></th><th>them</th><th>æther</th></tr></thead>
+            <tbody>
+              <tr><td>docs / queries / live</td><td>yes</td><td>yes</td></tr>
+              <tr><td>auth</td><td>their users table</td><td>your keypair</td></tr>
+              <tr><td>files</td><td>bucket</td><td>content-addressed</td></tr>
+              <tr><td>rules</td><td>server</td><td>every replica</td></tr>
+              <tr><td>offline</td><td>cache</td><td>the replica is the db</td></tr>
+              <tr><td>backup</td><td>export button</td><td>capsule + MQTT keep</td></tr>
+              <tr><td>bill / kill switch</td><td>yes</td><td>nothing to invoice</td></tr>
+            </tbody>
+          </table>
+          <p class="muted" style="margin-top:16px">
+            <button class="copy" id="capsule-out">download capsule</button>
+            <label class="copy" style="display:inline-block;margin-left:8px">restore capsule<input id="capsule-in" type="file" accept="application/json" hidden /></label>
           </p>
         </div>
       </div>
