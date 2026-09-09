@@ -17,7 +17,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.5.0';
+  const VERSION = '0.6.0';
   const CHAN = 'aether';
   const MAX_PEERS = 24;
   const CHUNK = 12000;
@@ -1946,16 +1946,44 @@
 
   function page(scriptSrc, ns, opts) {
     opts = opts || {};
+    const title = opts.title || 'Æther room';
+    const safeNs = escapeHtml(ns);
     return (
-      '<!DOCTYPE html>\n<meta charset="utf-8">\n<title>Æther</title>\n' +
+      '<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8"/>' +
+      '<meta name="viewport" content="width=device-width, initial-scale=1"/>' +
+      '<title>' +
+      escapeHtml(title) +
+      '</title><style>' +
+      'html,body{margin:0;background:#090a07;color:#f1e6d0;font:18px/1.45 Georgia,serif}' +
+      'main{max-width:720px;margin:0 auto;padding:28px 18px 90px}' +
+      'h1{font:800 42px/1 Arial,sans-serif;letter-spacing:-.04em;margin:8px 0 18px}' +
+      '.meta{font:12px ui-monospace,monospace;color:#8e9486;letter-spacing:.14em;text-transform:uppercase}' +
+      '#log{min-height:42vh}article{border-top:1px solid #222;padding:10px 0}' +
+      '.who{font:12px ui-monospace,monospace;color:#ddf35a}' +
+      'form{display:flex;gap:8px;position:sticky;bottom:0;padding:12px 0;background:#090a07}' +
+      'input{flex:1;background:transparent;border:1px solid #333;color:#f1e6d0;padding:12px;font:inherit}' +
+      'button{background:#ddf35a;border:0;padding:12px 16px;font-weight:800;cursor:pointer}' +
+      '</style></head><body><main>' +
+      '<p class="meta">Æther · 0 servers · ' +
+      safeNs +
+      '</p><h1>the room is the backend</h1><div id="log"></div>' +
+      '<form id="f"><input name="body" maxlength="400" placeholder="into the mesh…" autocomplete="off"/><button>send</button></form>' +
+      '</main>' +
       snippet(scriptSrc, ns, opts) +
       '\n<script>\n' +
-      "document.addEventListener('aether-ready', function (e) {\n" +
-      '  var db = e.detail;\n' +
-      "  db.set('hello/' + location.host, { at: Date.now() });\n" +
-      "  db.watch('', function (k, v) { console.log(k, v); });\n" +
-      '});\n' +
-      '</script>\n'
+      'Aether.define({messages:{' +
+      'list:Aether.query(function(ctx){return ctx.db.query("messages").order("_creationTime").collect();}),' +
+      'send:Aether.mutation(async function(ctx,a){var t=String(a.body||"").trim();if(!t)return;' +
+      'await ctx.db.insert("messages",{body:t.slice(0,400),author:((ctx.auth&&ctx.auth.id)||"anon").slice(0,8)});})' +
+      '}});\n' +
+      "document.addEventListener('aether-ready',function(e){" +
+      'var db=e.detail;db.live("messages.list",function(rows){var el=document.getElementById("log");el.innerHTML="";' +
+      '(rows||[]).forEach(function(r){var a=document.createElement("article");var w=document.createElement("div");' +
+      'w.className="who";w.textContent=r.author||"anon";var b=document.createElement("div");b.textContent=r.body||"";' +
+      'a.appendChild(w);a.appendChild(b);el.appendChild(a);});' +
+      'if(!rows||!rows.length){var p=document.createElement("p");p.className="meta";p.textContent="empty. the first write creates the room.";el.appendChild(p);}' +
+      '});document.getElementById("f").onsubmit=function(ev){ev.preventDefault();var v=this.body.value;this.body.value="";db.run("messages.send",{body:v});};' +
+      '});\n</script>\n</body></html>\n'
     );
   }
 
@@ -1996,14 +2024,92 @@
   }
   function magicUrl(nonce, eh) {
     if (typeof location === 'undefined') return '';
+    const base = location.origin + (location.pathname || '/');
     return (
-      location.origin +
-      '/?otp=' +
+      base.replace(/index\.html$/i, '') +
+      '?otp=' +
       encodeURIComponent(nonce) +
       '&eh=' +
       encodeURIComponent(eh) +
       '#/in'
     );
+  }
+  function shareUrl(ns, passphrase) {
+    if (typeof location === 'undefined') return link(ns, passphrase);
+    let u = location.origin + '/#/room?ns=' + encodeURIComponent(ns);
+    if (passphrase) u += '&p=' + encodeURIComponent(passphrase);
+    return u;
+  }
+  function kit(ns, opts) {
+    opts = opts || {};
+    const src =
+      opts.src ||
+      (typeof location !== 'undefined' ? location.origin.replace(/\/$/, '') + '/aether.js' : './aether.js');
+    const pass = opts.passphrase || '';
+    const passArg = pass ? ', { passphrase: ' + JSON.stringify(pass) + ' }' : '';
+    const tag = snippet(src, ns, opts);
+    const js =
+      '<script src="' +
+      src +
+      '"></script>\n<script>\n' +
+      'Aether.define({\n' +
+      '  messages: {\n' +
+      "    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),\n" +
+      '    send: Aether.mutation(async (ctx, { body }) => {\n' +
+      "      await ctx.db.insert('messages', { body, author: (ctx.auth && ctx.auth.id || 'anon').slice(0, 8) });\n" +
+      '    })\n' +
+      '  }\n' +
+      '});\n' +
+      'Aether.hitch(' +
+      JSON.stringify(ns) +
+      passArg +
+      ').then(db => {\n' +
+      "  db.live('messages.list', console.log);\n" +
+      '});\n' +
+      '</script>';
+    const vite =
+      "import Aether from './aether.js'\n" +
+      "import { AetherProvider, useQuery, useMutation } from './react.js'\n\n" +
+      'Aether.define({\n' +
+      '  messages: {\n' +
+      "    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),\n" +
+      "    send: Aether.mutation(async (ctx, { body }) => ctx.db.insert('messages', { body }))\n" +
+      '  }\n' +
+      '})\n\n' +
+      'await Aether.hitch(' +
+      JSON.stringify(ns) +
+      passArg +
+      ')\n';
+    const react =
+      "import Aether from './aether.js'\n" +
+      "import { AetherProvider, useQuery, useMutation } from './react.js'\n\n" +
+      'Aether.define({\n' +
+      '  messages: {\n' +
+      "    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),\n" +
+      "    send: Aether.mutation(async (ctx, { body }) => ctx.db.insert('messages', { body }))\n" +
+      '  }\n' +
+      '})\n\n' +
+      'function Room() {\n' +
+      "  const rows = useQuery('messages.list')\n" +
+      "  const send = useMutation('messages.send')\n" +
+      '  return /* your UI */\n' +
+      '}\n\n' +
+      '<AetherProvider ns={' +
+      JSON.stringify(ns) +
+      '}><Room /></AetherProvider>\n';
+    return {
+      ns: ns,
+      src: src,
+      link: link(ns, pass),
+      share: shareUrl(ns, pass),
+      tag: tag,
+      page: page(src, ns, opts),
+      js: js,
+      vite: vite,
+      react: react,
+      node: 'node node.js keep ' + ns + ' ./capsule.json',
+      html: tag
+    };
   }
   function normEmail(e) {
     return String(e || '')
@@ -2030,7 +2136,7 @@
     const message =
       'Someone (hopefully you) asked to enter Æther. There is no password.\n\nOpen this link:\n' +
       url +
-      '\n\nOr type this code on the gate page: ' +
+      '\n\nOr type this code on the site (Email in):\n' +
       code +
       '\n\nExpires in 20 minutes. If this was not you, ignore the letter.';
     try {
@@ -2090,6 +2196,46 @@
     } catch {}
     return pending;
   }
+
+  async function findOtp(gate, otp, code) {
+    const codeHash = code ? await sha256(String(code).trim()) : null;
+    if (otp) {
+      const rec = gate.get('~otp/' + otp);
+      if (rec) return { otp: otp, rec: rec };
+    }
+    if (codeHash) {
+      for (const row of gate.scan('~otp/')) {
+        const rec = row[1];
+        if (rec && rec.codeHash === codeHash && rec.exp > Date.now())
+          return { otp: String(row[0]).slice(5), rec: rec };
+      }
+    }
+    return null;
+  }
+  async function waitForOtp(gate, otp, code, ms) {
+    const until = Date.now() + (ms == null ? 6000 : ms);
+    let hit = await findOtp(gate, otp, code);
+    if (hit) return hit;
+    try {
+      await gate.waitSync(Math.min(4000, Math.max(600, until - Date.now())));
+    } catch (e) {}
+    hit = await findOtp(gate, otp, code);
+    if (hit) return hit;
+    return await new Promise(function (resolve, reject) {
+      const un = gate.watch('~otp/', async function () {
+        const h = await findOtp(gate, otp, code);
+        if (h) {
+          un();
+          clearTimeout(t);
+          resolve(h);
+        }
+      });
+      const t = setTimeout(function () {
+        un();
+        reject(new Error('unknown or spent link — the gate lattice may still be warming. send again, or wait and type the code'));
+      }, Math.max(400, until - Date.now()));
+    });
+  }
   async function proveLogin(opts) {
     opts = opts || {};
     const pending = loadPending() || {};
@@ -2097,11 +2243,13 @@
     if (!opts.eh) opts.eh = pending.eh;
     if (!opts.email) opts.email = pending.email;
     const gate = await openGate();
-    const rec = gate.get('~otp/' + opts.otp);
+    const hit = await waitForOtp(gate, opts.otp, opts.code, 7000);
+    opts.otp = hit.otp;
+    const rec = hit.rec;
     if (!rec) throw new Error('unknown or spent link');
     if (rec.exp < Date.now()) throw new Error('link expired — ask for a new letter');
     const email = opts.email ? normEmail(opts.email) : '';
-    const eh = opts.eh || (email ? await hashEmail(email) : '');
+    const eh = opts.eh || rec.eh || (email ? await hashEmail(email) : '');
     if (!eh || rec.eh !== eh) throw new Error('email mismatch');
     if (opts.code) {
       const ch = await sha256(String(opts.code).trim());
@@ -2279,6 +2427,29 @@
     if (!cur) await gate.set(key, { eh: ticket.eh, ns: ns, actor: gate.actor.id, at: Date.now() });
     return gate.get(key);
   }
+  async function ownedNamespaces() {
+    const t = loadTicket();
+    if (!t) return [];
+    const gate = await openGate();
+    try {
+      await gate.waitSync(2500);
+    } catch (e) {}
+    return gate
+      .scan('~ns/')
+      .filter(function (row) {
+        return row[1] && row[1].eh === t.eh;
+      })
+      .map(function (row) {
+        return row[1];
+      });
+  }
+  function myInvoices() {
+    const t = loadTicket();
+    if (!t) return [];
+    return listInvoices().filter(function (i) {
+      return i && i.eh === t.eh;
+    });
+  }
 
   const waiters = [];
   const pendingDefine = [];
@@ -2368,10 +2539,14 @@
     when: when,
     secret,
     link,
+    share: shareUrl,
+    kit,
     parse: parseLink,
     snippet,
     page,
     boot: boot,
+    GATE: GATE_NS,
+    GENESIS: GENESIS_NS,
     define,
     query: markQuery,
     mutation: markMutation,
@@ -2391,7 +2566,9 @@
       markPaid: markPaid,
       claim: claimNamespace,
       hash: hashEmail,
-      open: openGate
+      open: openGate,
+      owned: ownedNamespaces,
+      invoices: myInvoices
     },
     admin: {
       email: FOUNDER_EMAIL,
@@ -2428,6 +2605,15 @@
     const o = Object.assign({}, opts || {});
     if (parsed.passphrase && !o.passphrase) o.passphrase = parsed.passphrase;
     if (!o.ticket) o.ticket = loadTicket();
+    if (api.db && !api.db.closed && api.db.ns === parsed.ns) {
+      if (o.ticket) api.db.bindAccount(o.ticket);
+      return Promise.resolve(api.db);
+    }
+    if (api.db && api.db !== api.gate && !api.db.closed) {
+      try {
+        api.db.close();
+      } catch (e) {}
+    }
     api.ready = open(parsed.ns, o).then(function (db) {
       api.db = db;
       if (o.ticket) db.bindAccount(o.ticket);
@@ -2440,6 +2626,11 @@
       try {
         mount(document);
       } catch (e) {}
+      if (o.ticket && o.claim !== false && parsed.ns !== GATE_NS && parsed.ns !== GENESIS_NS) {
+        claimNamespace(parsed.ns, o.ticket).catch(function (e) {
+          db.log('claim ' + (e && e.message ? e.message : e));
+        });
+      }
       return db;
     });
     return api.ready;

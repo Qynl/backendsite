@@ -19,6 +19,7 @@ function serveSdk() {
     configureServer(server) {
       server.middlewares.use('/aether.js', send(path.join(root, 'aether.js'), 'text/javascript; charset=utf-8'));
       server.middlewares.use('/react.js', send(path.join(root, 'react.js'), 'text/javascript; charset=utf-8'));
+      server.middlewares.use('/node.js', send(path.join(root, 'node.js'), 'text/javascript; charset=utf-8'));
       server.middlewares.use('/favicon.svg', send(path.join(root, 'favicon.svg'), 'image/svg+xml'));
     },
     closeBundle() {
@@ -26,6 +27,7 @@ function serveSdk() {
       try {
         fs.copyFileSync(path.join(root, 'aether.js'), path.join(out, 'aether.js'));
         fs.copyFileSync(path.join(root, 'react.js'), path.join(out, 'react.js'));
+        fs.copyFileSync(path.join(root, 'node.js'), path.join(out, 'node.js'));
         fs.copyFileSync(path.join(root, 'favicon.svg'), path.join(out, 'favicon.svg'));
       } catch {}
     }

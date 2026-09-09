@@ -1,6 +1,6 @@
 {
   "name": "aether",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A backend that is not a place. Convex-shaped queries on a browser lattice. No origin data server.",
   "main": "aether.js",
   "exports": {

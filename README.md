@@ -12,9 +12,10 @@ npm run dev
 
 Open the preview (Vite binds `0.0.0.0:5173`). Then:
 
-1. **Email in** (`#/in`) — type an inbox. A letter is sent (public FormSubmit hop, plus a mailto you can fire yourself). Open the magic link `/?otp=&eh=#/in` or type the six-digit code. There is no password field.
-2. **Connect** (`#/connect`) — generate a secret, copy the HTML tag / Convex JS / Vite / Node snippet, paste it on any origin.
-3. **Room** (`#/room`) — this website hitches that namespace. Messages gossip over WebRTC. That *is* the backend.
+1. **Email in** (`#/in`) — type an inbox. A letter is sent (public FormSubmit hop, plus a mailto you can fire yourself). Open the magic link `/?otp=&eh=#/in` or type the six-digit code. There is no password field. The gate waits for the lattice to meet itself, so a code typed on another device still works.
+2. **Connect** (`#/connect`) — generate a secret. Copy the HTML tag, Convex JS, React hooks, Vite, Node keeper, or download a whole HTML room. Share the room URL.
+3. **Room** (`#/room?ns=…`) — this website hitches that namespace. Messages, presence, pulse, capsules. That *is* the backend.
+4. **Docs** (`#/docs`) — the dialect on the same origin that serves `/aether.js`.
 
 The same origin serves `/aether.js` (and `/react.js`) so a foreign site can `<script src="https://THIS-HOST/aether.js" data-aether="ae-…">`. That host is not the database.
 
@@ -36,7 +37,7 @@ Capability = the namespace string. Any website that opens the same name **is the
 
 **Easiest: open Connect (`#/connect`) on this website, generate a secret, copy the tag, paste it into every site.**
 
-That tag is the whole backend. The Connect page also prints Convex-shaped JS, a Vite import, and a Node keeper command.
+That tag is the whole backend. The Connect page also prints Convex-shaped JS, React hooks, a Vite import, a Node keeper command, a downloadable HTML room, and a shareable `#/room?ns=` URL. `Aether.kit(ns)` returns every dialect as strings.
 
 ### 1. One HTML tag (no JavaScript required)
 

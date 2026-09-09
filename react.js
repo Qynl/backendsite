@@ -83,6 +83,50 @@
     );
   }
 
+  function useStatus() {
+    const R = getReact();
+    const db = useAether();
+    const [st, setSt] = R.useState(function () {
+      return db && db.status ? db.status() : null;
+    });
+    R.useEffect(
+      function () {
+        if (!db || !db.onStatus) return;
+        setSt(db.status());
+        return db.onStatus(function (_t, s) {
+          setSt(s);
+        });
+      },
+      [db]
+    );
+    return st;
+  }
+
+  function usePresence() {
+    const R = getReact();
+    const db = useAether();
+    const [p, setP] = R.useState([]);
+    R.useEffect(
+      function () {
+        if (!db) return;
+        const tick = function () {
+          try {
+            setP(db.presence());
+          } catch (e) {}
+        };
+        tick();
+        const id = setInterval(tick, 4000);
+        const un = db.watch('#p/', tick);
+        return function () {
+          clearInterval(id);
+          un();
+        };
+      },
+      [db]
+    );
+    return p;
+  }
+
   function useAccount() {
     const R = getReact();
     const A = typeof Aether !== 'undefined' ? Aether : null;
@@ -112,6 +156,8 @@
     useQuery: useQuery,
     useMutation: useMutation,
     useAccount: useAccount,
+    useStatus: useStatus,
+    usePresence: usePresence,
     Authenticated: Authenticated
   };
 });

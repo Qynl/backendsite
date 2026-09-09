@@ -1,18 +1,21 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import Aether, { copyText, go, sdkOrigin } from './lib/sdk.js';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import Aether, { copyText, download, go, readHash, sdkOrigin } from './lib/sdk.js';
 
 const Ctx = createContext(null);
 export const useSdk = () => useContext(Ctx);
 
-function useHash() {
-  const read = () => (location.hash.replace(/^#\/?/, '').split('?')[0].split('/')[0] || 'home');
-  const [route, setRoute] = useState(read);
+function useRoute() {
+  const [h, setH] = useState(readHash);
   useEffect(() => {
-    const on = () => setRoute(read());
+    const on = () => setH(readHash());
     addEventListener('hashchange', on);
-    return () => removeEventListener('hashchange', on);
+    addEventListener('popstate', on);
+    return () => {
+      removeEventListener('hashchange', on);
+      removeEventListener('popstate', on);
+    };
   }, []);
-  return route;
+  return h;
 }
 
 function Provider({ children }) {
@@ -28,6 +31,7 @@ function Provider({ children }) {
   const [db, setDb] = useState(null);
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState('');
+  const unStatus = useRef(null);
 
   const refreshTicket = useCallback(async () => {
     try {
@@ -42,16 +46,20 @@ function Provider({ children }) {
 
   const hitchNs = useCallback(async (name, extra) => {
     setBusy('hitching the lattice…');
-    const d = await Aether.hitch(name, extra || {});
-    setDb(d);
-    setNs(name);
     try {
-      localStorage.setItem('aether.ns', name);
-    } catch {}
-    setStatus(d.status());
-    d.onStatus((_t, s) => setStatus(s));
-    setBusy('');
-    return d;
+      const d = await Aether.hitch(name, extra || {});
+      setDb(d);
+      setNs(name);
+      try {
+        localStorage.setItem('aether.ns', name);
+      } catch {}
+      if (unStatus.current) unStatus.current();
+      setStatus(d.status());
+      unStatus.current = d.onStatus((_t, s) => setStatus(s));
+      return d;
+    } finally {
+      setBusy('');
+    }
   }, []);
 
   const value = useMemo(
@@ -76,11 +84,33 @@ function Provider({ children }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+function Copy({ btn, label }) {
+  const [ok, setOk] = useState(false);
+  return (
+    <button
+      className="ghost"
+      type="button"
+      onClick={async () => {
+        const y = await copyText(btn);
+        setOk(y);
+        setTimeout(() => setOk(false), 1400);
+      }}
+    >
+      {ok ? 'copied' : label || 'copy'}
+    </button>
+  );
+}
+
 function Top() {
   const { ticket, status } = useSdk();
-  const route = useHash();
+  const { route } = useRoute();
+  const [open, setOpen] = useState(false);
   const Link = ({ to, children }) => (
-    <a href={'#/' + to} className={route === to ? 'on' : ''}>
+    <a
+      href={'#/' + to}
+      className={route === to ? 'on' : ''}
+      onClick={() => setOpen(false)}
+    >
       {children}
     </a>
   );
@@ -93,12 +123,19 @@ function Top() {
             Æ
           </text>
         </svg>
-        <em>Æther</em>
+        <div>
+          <em>Æther</em>
+          <small>v {Aether.version} · unhosted</small>
+        </div>
       </a>
-      <nav className="nav">
+      <button className="burger" type="button" aria-label="menu" onClick={() => setOpen((v) => !v)}>
+        ≡
+      </button>
+      <nav className={'nav' + (open ? ' open' : '')}>
         <Link to="connect">connect</Link>
         <Link to="room">room</Link>
         <Link to="in">email in</Link>
+        <Link to="docs">docs</Link>
         <Link to="account">{ticket ? ticket.plan : 'account'}</Link>
         {ticket && ticket.role === 'admin' && <Link to="admin">admin</Link>}
         {ticket && <span className="chip">{ticket.plan}</span>}
@@ -127,6 +164,9 @@ function Foot() {
           <span>
             events <b>{status.events}</b>
           </span>
+          <span>
+            peers <b>{status.peerCount}</b>
+          </span>
         </>
       )}
       {busy && <span>{busy}</span>}
@@ -134,29 +174,116 @@ function Foot() {
   );
 }
 
+function Field({ db }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const ctx = c.getContext('2d');
+    const draw = () => {
+      const w = (c.width = c.clientWidth * devicePixelRatio);
+      const h = (c.height = 220 * devicePixelRatio);
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#070806';
+      ctx.fillRect(0, 0, w, h);
+      const keys = db ? db.scan().slice(0, 180) : [];
+      keys.forEach(([k], i) => {
+        let hsh = 0;
+        for (let n = 0; n < k.length; n++) hsh = (hsh * 33 + k.charCodeAt(n)) >>> 0;
+        const x = ((hsh & 0xffff) / 0xffff) * w;
+        const y = (((hsh >>> 16) & 0xffff) / 0xffff) * h;
+        ctx.fillStyle = i % 7 === 0 ? '#ddf35a' : '#d08a4c';
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath();
+        ctx.arc(x, y, 1.6 * devicePixelRatio, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+    };
+    draw();
+    const un = db && db.watch ? db.watch('', draw) : () => {};
+    const onr = () => draw();
+    addEventListener('resize', onr);
+    return () => {
+      un && un();
+      removeEventListener('resize', onr);
+    };
+  }, [db]);
+  return <canvas className="field" ref={ref} />;
+}
+
 function Home() {
   const th = Aether.theorem();
+  const [gen, setGen] = useState(null);
+  const [n, setN] = useState(0);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let alive = true;
+    let d;
+    (async () => {
+      try {
+        d = await Aether.open(Aether.GENESIS || 'æther://genesis', { meter: false });
+        if (!alive) {
+          d.close();
+          return;
+        }
+        setGen(d);
+        const tick = () => setN(d.count('pulse'));
+        tick();
+        d.watch('#c/pulse/', tick);
+      } catch (e) {
+        if (alive) setErr(String(e.message || e));
+      }
+    })();
+    return () => {
+      alive = false;
+      try {
+        d && d.close();
+      } catch {}
+    };
+  }, []);
   return (
-    <div className="page">
-      <p className="kicker">a backend that is not a place</p>
-      <h1>
-        <span className="no">there is</span>
-        NO
-        <br />
-        SERVER
-      </h1>
-      <p className="lede">
-        Convex-shaped queries. Email-only accounts. The database is this browser, and every other browser holding the
-        same name. Theorem {th.holds ? 'holds' : 'BROKEN'}.
-      </p>
-      <div className="row">
-        <button className="hit" onClick={() => go('connect')}>
-          get a backend
-        </button>
-        <button className="hit ghost" onClick={() => go('in')}>
-          log in with email
-        </button>
+    <div className="page wide">
+      <div className="hero-split">
+        <div>
+          <p className="kicker">a backend that is not a place</p>
+          <h1>
+            <span className="no">there is</span>
+            NO
+            <br />
+            <strike>SERVER</strike>
+          </h1>
+          <p className="lede">
+            Convex-shaped queries. Email-only accounts. The database is this browser, and every other browser holding
+            the same name. Theorem {th.holds ? 'holds' : 'BROKEN'}.
+          </p>
+          <div className="row">
+            <button className="hit" onClick={() => go('connect')}>
+              get a backend
+            </button>
+            <button className="hit ghost" onClick={() => go('in')}>
+              log in with email
+            </button>
+          </div>
+        </div>
+        <aside className="aside">
+          <strong>What the network tab will show</strong>
+          static html, css, js
+          <br />
+          wss → public bittorrent trackers
+          <br />
+          stun → ice candidates
+          <br />
+          webrtc datachannels
+          <br />
+          optional POST formsubmit.co (mail hop only)
+          <br />
+          <span style={{ color: 'var(--acid)' }}>Ω = ⊔ replicas</span>
+          <br />
+          Trackers matchmake. They never see a document. There is no Æther company.
+        </aside>
       </div>
+
       <div className="grid" style={{ marginTop: 48 }}>
         <div className="card">
           <div className="lbl">1. email</div>
@@ -171,6 +298,79 @@ function Home() {
           <p>Writes gossip over WebRTC. This website uses Æther as its own backend.</p>
         </div>
       </div>
+
+      <h3>Touch a public lattice</h3>
+      <p className="muted">Genesis is public on purpose. Strike it. Open another tab. The number is not a server counter.</p>
+      <div className="grid-2" style={{ marginTop: 12 }}>
+        <div className="card">
+          <div className="lbl">the pulse · PN-counter</div>
+          <p className="pulse">{n}</p>
+          <button
+            className="hit"
+            disabled={!gen}
+            onClick={async () => {
+              try {
+                await gen.inc('pulse', 1);
+                setN(gen.count('pulse'));
+              } catch (e) {
+                setErr(String(e.message || e));
+              }
+            }}
+          >
+            strike the drum
+          </button>
+          {err && <p className="err">{err}</p>}
+        </div>
+        <div className="card">
+          <div className="lbl">content-addressed sky</div>
+          <Field db={gen} />
+          <p className="muted" style={{ marginTop: 8 }}>
+            Each key is a star. Peers light up the same sky.
+          </p>
+        </div>
+      </div>
+
+      <h3>It is a theorem, not a machine</h3>
+      <div className="eq">
+        A ⊔ B = B ⊔ A (commutative)
+        <br />
+        (A ⊔ B) ⊔ C = A ⊔ (B ⊔ C) (associative)
+        <br />
+        A ⊔ A = A (idempotent)
+        <br />∴ (S, ⊔) is a join-semilattice, and Ω is unique.
+      </div>
+      <div className="proof">
+        <span>
+          commutative <b>{th.commutative ? 'yes' : 'no'}</b>
+        </span>
+        <span>
+          associative <b>{th.associative ? 'yes' : 'no'}</b>
+        </span>
+        <span>
+          idempotent <b>{th.idempotent ? 'yes' : 'no'}</b>
+        </span>
+        <span>
+          holds <b>{th.holds ? 'yes' : 'BROKEN'}</b>
+        </span>
+      </div>
+
+      <h3>Widen later. Start free.</h3>
+      <div className="grid">
+        {['anon', 'spark', 'braid', 'loom'].map((p) => {
+          const pl = Aether.plans[p];
+          return (
+            <div className="card" key={p}>
+              <div className="lbl">{pl.label}</div>
+              <p className="price">{pl.eur ? pl.eur + '€' : '0€'}</p>
+              <p className="muted">{pl.blurb}</p>
+              <p className="muted">
+                {pl.ns === Infinity ? '∞' : pl.ns} ns · {pl.keys === Infinity ? '∞' : pl.keys} keys ·{' '}
+                {pl.writes === Infinity ? '∞' : pl.writes} writes/day
+              </p>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -178,73 +378,61 @@ function Home() {
 function Snippets({ ns, pass }) {
   const { origin } = useSdk();
   const [tab, setTab] = useState('tag');
-  const tag = Aether.snippet(origin, ns, pass ? { passphrase: pass } : {});
-  const js = `<script src="${origin}"></script>
-<script>
-  Aether.define({
-    messages: {
-      list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
-      send: Aether.mutation(async (ctx, { body }) => ctx.db.insert('messages', { body }))
-    }
-  });
-  Aether.hitch('${ns}'${pass ? `, { passphrase: '${pass}' }` : ''}).then(db => {
-    db.live('messages.list', console.log);
-  });
-</script>`;
-  const vite = `import Aether from './aether.js'
-
-Aether.define({ /* queries + mutations */ })
-await Aether.hitch('${ns}')`;
-  const node = `node node.js keep ${ns} ./capsule.json`;
-  const body = tab === 'js' ? js : tab === 'vite' ? vite : tab === 'node' ? node : tag;
+  const kit = Aether.kit(ns, { src: origin, passphrase: pass || undefined });
+  const tabs = [
+    ['tag', '1. one tag'],
+    ['js', 'js'],
+    ['react', 'react'],
+    ['vite', 'vite'],
+    ['node', 'node'],
+    ['page', 'html file']
+  ];
+  const body = kit[tab] || kit.tag;
   return (
     <div>
       <div className="tabs">
-        {['tag', 'js', 'vite', 'node'].map((t) => (
+        {tabs.map(([t, label]) => (
           <button key={t} className={'tab' + (tab === t ? ' on' : '')} onClick={() => setTab(t)}>
-            {t === 'tag' ? '1. one tag' : t}
+            {label}
           </button>
         ))}
       </div>
       <pre className="snip">{body}</pre>
       <div className="row" style={{ marginTop: 10 }}>
         <Copy btn={body} />
+        {tab === 'page' && (
+          <button className="ghost" type="button" onClick={() => download('aether-room.html', kit.page, 'text/html')}>
+            download html
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-function Copy({ btn, label }) {
-  const [ok, setOk] = useState(false);
-  return (
-    <button
-      className="ghost"
-      type="button"
-      onClick={async () => {
-        const y = await copyText(btn);
-        setOk(y);
-        setTimeout(() => setOk(false), 1200);
-      }}
-    >
-      {ok ? 'copied' : label || 'copy'}
-    </button>
-  );
-}
-
 function Connect() {
-  const { ns, setNs, pass, setPass, ticket, hitchNs, busy } = useSdk();
+  const { ns, setNs, pass, setPass, ticket, hitchNs, busy, origin } = useSdk();
   const [err, setErr] = useState('');
   useEffect(() => {
     if (!ns) setNs(Aether.secret());
   }, []);
+  const kit = ns ? Aether.kit(ns, { src: origin, passphrase: pass || undefined }) : null;
   return (
     <div className="page">
       <p className="kicker">hitch any website · 20 seconds</p>
       <h2>Paste one tag. That’s the backend.</h2>
-      <p className="lede">Generate a secret. Copy the snippet. Same string on every origin. WebRTC does not care which domain you are on.</p>
+      <p className="lede">
+        Generate a secret. Copy the snippet. Same string on every origin. WebRTC does not care which domain you are on.
+      </p>
       {!ticket && (
         <p className="muted">
           Not signed in — you’ll hitch as <b>anon</b> (tiny quota). <a href="#/in">Email in</a> for spark, free.
+        </p>
+      )}
+      {ticket && (
+        <p className="ok">
+          ticket {ticket.plan}
+          {ticket.email ? ' · ' + ticket.email : ''}. Hitch will claim this namespace to your inbox.
         </p>
       )}
       <ol className="steps">
@@ -252,7 +440,7 @@ function Connect() {
           <b>Name the lattice</b>
           The name is the API key, the URL, and the lock.
           <div className="row" style={{ marginTop: 10 }}>
-            <input value={ns} onChange={(e) => setNs(e.target.value.trim())} style={{ flex: 1 }} />
+            <input value={ns} onChange={(e) => setNs(e.target.value.trim())} style={{ flex: 1 }} spellCheck={false} />
             <button className="ghost" type="button" onClick={() => setNs(Aether.secret())}>
               generate
             </button>
@@ -268,21 +456,21 @@ function Connect() {
         </li>
         <li>
           <b>Copy how you want to speak</b>
-          HTML tag, Convex-shaped JS, Vite, or a Node keeper. Same Ω.
+          HTML tag, Convex-shaped JS, React hooks, Vite, Node keeper, or a whole page. Same Ω.
           {ns && <Snippets ns={ns} pass={pass} />}
         </li>
         <li>
           <b>Open the live room</b>
-          This website hitches the same namespace — Æther is its own backend.
+          This website hitches the same namespace — Æther is its own backend. Share the room URL with another device.
           <div className="row" style={{ marginTop: 10 }}>
             <button
               className="hit"
-              disabled={!!busy}
+              disabled={!!busy || !ns}
               onClick={async () => {
                 setErr('');
                 try {
                   await hitchNs(ns, pass ? { passphrase: pass } : {});
-                  go('room');
+                  go('room', { ns, p: pass || undefined });
                 } catch (e) {
                   setErr(String(e.message || e));
                 }
@@ -290,7 +478,13 @@ function Connect() {
             >
               {busy || 'open room'}
             </button>
-            <Copy btn={Aether.link(ns, pass)} label="copy aether:// link" />
+            {kit && <Copy btn={kit.link} label="copy aether:// link" />}
+            {kit && <Copy btn={kit.share} label="copy room URL" />}
+            {kit && (
+              <button className="ghost" type="button" onClick={() => download('aether-room.html', kit.page, 'text/html')}>
+                download html
+              </button>
+            )}
           </div>
           {err && <p className="err">{err}</p>}
         </li>
@@ -312,6 +506,19 @@ function Gate() {
   const [pending, setPending] = useState(() => Aether.account.pending());
   const [msg, setMsg] = useState('');
   const [kind, setKind] = useState('');
+  const [left, setLeft] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const p = Aether.account.pending();
+      if (!p) {
+        setLeft(0);
+        return;
+      }
+      setLeft(Math.max(0, 20 * 60 * 1000 - (Date.now() - p.at)));
+    }, 500);
+    return () => clearInterval(id);
+  }, [pending]);
 
   useEffect(() => {
     const q = new URLSearchParams(location.search);
@@ -319,12 +526,15 @@ function Gate() {
     const eh = q.get('eh');
     if (!otp) return;
     (async () => {
-      setBusy('opening the letter…');
+      setBusy('warming the gate lattice…');
       try {
-        const t = await Aether.account.prove({ otp, eh, email });
+        const t = await Aether.account.prove({ otp, eh, email: email || undefined });
         setTicket(t);
         setKind('ok');
         setMsg('in. plan ' + t.plan + (t.role === 'admin' ? ' · you are the void' : ''));
+        try {
+          history.replaceState({}, '', location.pathname + '#/connect');
+        } catch {}
         go('connect');
       } catch (e) {
         setKind('err');
@@ -341,11 +551,11 @@ function Gate() {
     try {
       const r = await Aether.account.send(email);
       setPending(r);
-      setKind('ok');
+      setKind(r.mailed && r.mailed.ok ? 'ok' : 'err');
       setMsg(
         r.mailed && r.mailed.ok
           ? 'Letter handed to the mail hop. Check inbox and spam. First time: confirm FormSubmit, then send again.'
-          : 'The hop did not take it. Send the letter yourself with your mail app — or type the code below.'
+          : 'The hop did not take it. Open your mail app — or type the code below. The code is the whole proof.'
       );
     } catch (err) {
       setKind('err');
@@ -398,12 +608,17 @@ function Gate() {
     );
   }
 
+  const mins = Math.floor(left / 60000);
+  const secs = Math.floor((left % 60000) / 1000)
+    .toString()
+    .padStart(2, '0');
+
   return (
     <div className="page">
       <p className="kicker">no passwords · a letter is the key</p>
       <h2>Your email is the account.</h2>
       <p className="lede">
-        We send a link and a six-digit code. Open either. Admin is <code>qynlden@tutamail.com</code> and is infinite.
+        We send a link and a six-digit code. Open either. Admin is <code>{Aether.founder}</code> and is infinite.
       </p>
       <form onSubmit={send} className="row" style={{ marginBottom: 18 }}>
         <input
@@ -420,9 +635,14 @@ function Gate() {
       </form>
       {pending && (
         <div className="card" style={{ marginBottom: 18 }}>
-          <div className="lbl">step 2 · open the letter, or type the code</div>
+          <div className="lbl">
+            step 2 · open the letter, or type the code {left > 0 ? '· ' + mins + ':' + secs : '· expired, send again'}
+          </div>
           <div className="code">{pending.code}</div>
-          <p className="muted">This code is also in the email. First hop may be a confirmation from FormSubmit — click it, then send again.</p>
+          <p className="muted">
+            This code is also in the email. First hop may be a confirmation from FormSubmit — click it, then send again.
+            A new tab on another device needs a few seconds for the gate lattice to meet itself.
+          </p>
           <div className="row">
             {pending.mailto && (
               <a className="hit ghost" href={pending.mailto}>
@@ -430,6 +650,7 @@ function Gate() {
               </a>
             )}
             <Copy btn={pending.url} label="copy magic link" />
+            <Copy btn={pending.code} label="copy code" />
           </div>
           <form onSubmit={prove} className="row" style={{ marginTop: 14 }}>
             <input
@@ -438,6 +659,7 @@ function Gate() {
               placeholder="6-digit code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
+              autoComplete="one-time-code"
             />
             <button className="hit" disabled={!!busy}>
               enter
@@ -451,19 +673,33 @@ function Gate() {
 }
 
 function Room() {
-  const { ns, db, hitchNs, pass, ticket, busy, status } = useSdk();
+  const { ns, setNs, db, hitchNs, pass, setPass, ticket, busy, status } = useSdk();
+  const { params } = useRoute();
   const [rows, setRows] = useState([]);
   const [body, setBody] = useState('');
   const [err, setErr] = useState('');
+  const [pulse, setPulse] = useState(0);
+  const [people, setPeople] = useState([]);
+  const [who, setWho] = useState('');
+
+  useEffect(() => {
+    const qn = params.get('ns');
+    const qp = params.get('p');
+    if (qn && qn !== ns) setNs(qn);
+    if (qp && qp !== pass) setPass(qp);
+  }, [params]);
 
   useEffect(() => {
     let un = () => {};
+    let un2 = () => {};
+    let iv;
     (async () => {
       try {
         let d = db;
-        if (!d) {
-          const name = ns || Aether.secret();
-          d = await hitchNs(name, pass ? { passphrase: pass } : {});
+        const name = params.get('ns') || ns || Aether.secret();
+        const p = params.get('p') || pass;
+        if (!d || d.ns !== name) {
+          d = await hitchNs(name, p ? { passphrase: p } : {});
         }
         Aether.define({
           messages: {
@@ -477,25 +713,72 @@ function Room() {
           }
         });
         un = d.live('messages.list', setRows);
+        const tick = () => {
+          try {
+            setPulse(d.count('pulse'));
+            setPeople(d.presence());
+            const me = d.auth && d.auth.me();
+            setWho(me ? me.id : '');
+          } catch {}
+        };
+        tick();
+        un2 = d.watch('', tick);
+        iv = setInterval(tick, 4000);
       } catch (e) {
         setErr(String(e.message || e));
       }
     })();
-    return () => un();
-  }, [db]);
+    return () => {
+      un();
+      un2();
+      clearInterval(iv);
+    };
+  }, [db, ns]);
+
+  const share = ns ? (Aether.share ? Aether.share(ns, pass) : location.origin + '/#/room?ns=' + encodeURIComponent(ns)) : '';
 
   return (
-    <div className="page">
+    <div className="page wide">
       <p className="kicker">live room · this site’s backend is Æther</p>
       <h2>Say something into the lattice.</h2>
       <p className="muted">
         ns <code>{ns || '—'}</code>
-        {ticket ? ' · ' + ticket.plan : ' · anon'} · open this URL on another device with the same namespace.
+        {ticket ? ' · ' + ticket.plan : ' · anon'} · open the room URL on another device.
       </p>
+      <div className="row" style={{ margin: '8px 0 16px' }}>
+        {share && <Copy btn={share} label="copy room URL" />}
+        {ns && <Copy btn={Aether.link(ns, pass)} label="copy aether://" />}
+        {db && (
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => download((ns || 'lattice') + '.json', JSON.stringify(db.exportCapsule(), null, 2), 'application/json')}
+          >
+            download capsule
+          </button>
+        )}
+        <label className="ghost">
+          restore
+          <input
+            type="file"
+            accept="application/json"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files && e.target.files[0];
+              if (!f || !db) return;
+              try {
+                await db.importCapsule(JSON.parse(await f.text()));
+              } catch (ex) {
+                setErr(String(ex.message || ex));
+              }
+            }}
+          />
+        </label>
+      </div>
       {err && <p className="err">{err}</p>}
-      <div className="room" style={{ marginTop: 18 }}>
+      <div className="room">
         <div>
-          <div className="log" id="log">
+          <div className="log">
             {(rows || []).map((r) => (
               <article key={r._id}>
                 <div className="who">{r.author || 'anon'}</div>
@@ -518,7 +801,13 @@ function Room() {
               }
             }}
           >
-            <input value={body} onChange={(e) => setBody(e.target.value)} placeholder="into the mesh…" maxLength={400} style={{ flex: 1 }} />
+            <input
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="into the mesh…"
+              maxLength={400}
+              style={{ flex: 1 }}
+            />
             <button className="hit" disabled={!!busy || !db}>
               send
             </button>
@@ -527,6 +816,8 @@ function Room() {
         <aside className="card">
           <div className="lbl">replica</div>
           <p className="muted">
+            actor {who || '—'}
+            <br />
             peers {status ? status.peerCount : 0}
             <br />
             events {status ? status.events : 0}
@@ -535,9 +826,44 @@ function Room() {
             <br />
             servers 0
           </p>
-          <p className="muted" style={{ marginTop: 12 }}>
-            Queries run here, then gossip. There is no Convex cloud.
+          <div className="lbl" style={{ marginTop: 16 }}>
+            presence
+          </div>
+          <div className="people">
+            {(people || []).map((p) => (
+              <span key={p.actor}>{p.actor.slice(0, 8)}</span>
+            ))}
+            {!(people && people.length) && <span>just you</span>}
+          </div>
+          <div className="lbl" style={{ marginTop: 16 }}>
+            pulse
+          </div>
+          <p className="pulse" style={{ fontSize: 42 }}>
+            {pulse}
           </p>
+          <button
+            className="ghost"
+            type="button"
+            disabled={!db}
+            onClick={async () => {
+              try {
+                await db.inc('pulse', 1);
+                setPulse(db.count('pulse'));
+              } catch (ex) {
+                setErr(String(ex.message || ex));
+              }
+            }}
+          >
+            strike
+          </button>
+          <div className="lbl" style={{ marginTop: 16 }}>
+            signaling
+          </div>
+          <div className="slog">
+            {(status && status.log ? status.log.slice(-12) : []).map((l, i) => (
+              <div key={i}>{l.msg}</div>
+            ))}
+          </div>
         </aside>
       </div>
     </div>
@@ -547,10 +873,23 @@ function Room() {
 function Account() {
   const { ticket, setTicket, db, refreshTicket } = useSdk();
   const [inv, setInv] = useState(null);
+  const [mine, setMine] = useState([]);
+  const [owned, setOwned] = useState([]);
   const [msg, setMsg] = useState('');
   const plan = (ticket && Aether.plans[ticket.plan]) || Aether.plans.anon;
   const usedKeys = db && db.meteredKeys ? db.meteredKeys() : 0;
   const usedW = db && db.writesToday ? db.writesToday() : 0;
+
+  useEffect(() => {
+    if (!ticket) return;
+    (async () => {
+      try {
+        await Aether.account.open();
+        if (Aether.account.owned) setOwned(await Aether.account.owned());
+        if (Aether.account.invoices) setMine(Aether.account.invoices());
+      } catch {}
+    })();
+  }, [ticket]);
 
   async function buy(name) {
     setMsg('');
@@ -602,15 +941,42 @@ function Account() {
         </div>
         <div className="card">
           <div className="lbl">namespaces</div>
-          <b>{plan.ns === Infinity ? '∞' : plan.ns}</b>
+          <b>
+            {owned.length} / {plan.ns === Infinity ? '∞' : plan.ns}
+          </b>
         </div>
       </div>
-      <h2 style={{ fontSize: 28 }}>Widen the room</h2>
+      {owned.length > 0 && (
+        <>
+          <h3>Your lattices</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>namespace</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {owned.map((o) => (
+                <tr key={o.ns}>
+                  <td className="k">{o.ns}</td>
+                  <td>
+                    <button className="ghost" type="button" onClick={() => go('room', { ns: o.ns })}>
+                      open
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+      <h2 style={{ fontSize: 28, marginTop: 28 }}>Widen the room</h2>
       <div className="grid">
         {['braid', 'loom'].map((p) => (
           <div className="card" key={p}>
             <div className="lbl">{p}</div>
-            <p style={{ fontFamily: 'var(--display)', fontSize: 36, margin: '6px 0' }}>{Aether.plans[p].eur}€</p>
+            <p className="price">{Aether.plans[p].eur}€</p>
             <p className="muted">{Aether.plans[p].blurb}</p>
             <button className="hit" onClick={() => buy(p)}>
               pay {p}
@@ -630,6 +996,18 @@ function Account() {
                 <a href={inv.pay.stripe}>Stripe</a>
               </>
             )}
+            {inv.pay && inv.pay.paypal && (
+              <>
+                {' '}
+                <a href={inv.pay.paypal}>PayPal</a>
+              </>
+            )}
+            {inv.pay && inv.pay.crypto && (
+              <>
+                {' '}
+                <a href={inv.pay.crypto}>crypto</a>
+              </>
+            )}
           </p>
           <button
             className="hit ghost"
@@ -642,11 +1020,39 @@ function Account() {
           </button>
         </div>
       )}
+      {mine.length > 0 && (
+        <table style={{ marginTop: 18 }}>
+          <thead>
+            <tr>
+              <th>invoice</th>
+              <th>plan</th>
+              <th>status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {mine.map((i) => (
+              <tr key={i.id}>
+                <td className="k">{i.id}</td>
+                <td>{i.plan}</td>
+                <td>{i.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {msg && <p className="ok">{msg}</p>}
       <div className="row" style={{ marginTop: 24 }}>
         <button className="ghost" onClick={() => refreshTicket()}>
           refresh plan
         </button>
+        {db && db.auth && (
+          <button
+            className="ghost"
+            onClick={() => download('aether-seed.json', db.auth.exportSeed(), 'application/json')}
+          >
+            export replica seed
+          </button>
+        )}
         <button
           className="ghost"
           onClick={() => {
@@ -688,7 +1094,7 @@ function Admin() {
         <p className="kicker">void</p>
         <h2>This is not your void.</h2>
         <p className="lede">
-          Log in with <code>qynlden@tutamail.com</code>. That inbox is infinite.
+          Log in with <code>{Aether.founder}</code>. That inbox is infinite.
         </p>
         <button className="hit" onClick={() => go('in')}>
           email in
@@ -764,7 +1170,7 @@ function Admin() {
         </thead>
         <tbody>
           {rows.map((a) => (
-            <tr key={a.eh}>
+            <tr key={a.eh} onClick={() => setEh(a.eh)} style={{ cursor: 'pointer' }}>
               <td className="k">{a.eh}</td>
               <td>{a.plan}</td>
               <td>{a.role}</td>
@@ -813,8 +1219,62 @@ function Admin() {
   );
 }
 
+function Docs() {
+  const { origin } = useSdk();
+  return (
+    <div className="page docs">
+      <p className="kicker">the dialect</p>
+      <h2>Speak Ω like Convex. Host nothing.</h2>
+      <p className="lede">Copy a file. Hitch a name. Queries run here, then gossip.</p>
+
+      <h3>1. One tag</h3>
+      <pre className="snip">{`<script src="${origin}" data-aether="ae-YOUR-SECRET"></script>`}</pre>
+      <p className="muted">
+        <code>window.db</code> appears. Same tag on every origin. That is the whole sync setup.
+      </p>
+
+      <h3>2. Queries & mutations</h3>
+      <pre className="snip">{`Aether.define({
+  messages: {
+    list: Aether.query(ctx => ctx.db.query('messages').order('_creationTime').collect()),
+    send: Aether.mutation(async (ctx, { body }) => {
+      await ctx.db.insert('messages', { body, author: ctx.auth.id.slice(0, 8) });
+    })
+  }
+});
+db.live('messages.list', rows => render(rows));
+await db.run('messages.send', { body: 'hello' });`}</pre>
+
+      <h3>3. HTML with no further JS</h3>
+      <pre className="snip">{`<ul data-ae="messages.list"><template><li>{body}</li></template></ul>
+<form data-ae-run="messages.send"><input name="body" /></form>`}</pre>
+
+      <h3>4. React</h3>
+      <pre className="snip">{`import { AetherProvider, useQuery, useMutation } from './react.js'
+<AetherProvider ns="ae-YOUR-SECRET"><App /></AetherProvider>`}</pre>
+
+      <h3>5. Email in. No passwords.</h3>
+      <pre className="snip">{`await Aether.account.send('you@somewhere')
+await Aether.account.prove({ code: '123456' })
+Aether.hitch(ns) // ticket rides along, quotas follow the inbox`}</pre>
+      <p className="muted">
+        Admin <code>{Aether.founder}</code> is infinite. Spark is free. Braid 9€ / loom 29€.
+      </p>
+
+      <h3>6. Prove there is no origin API</h3>
+      <p className="muted">
+        Network tab: GET aether.js, wss trackers, wss mqtt, STUN, optional formsubmit. No fetch to your server. WebRTC
+        is chrome://webrtc-internals.
+      </p>
+      <p className="muted">
+        Full notes live in the repo README. Capability = the namespace string.
+      </p>
+    </div>
+  );
+}
+
 export default function App() {
-  const route = useHash();
+  const { route } = useRoute();
   const page =
     route === 'connect' ? (
       <Connect />
@@ -826,12 +1286,15 @@ export default function App() {
       <Account />
     ) : route === 'admin' ? (
       <Admin />
+    ) : route === 'docs' ? (
+      <Docs />
     ) : (
       <Home />
     );
   return (
     <Provider>
       <div className="grain" />
+      <div className="vignette" />
       <Top />
       {page}
       <Foot />
