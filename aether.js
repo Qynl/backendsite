@@ -17,7 +17,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.4.0';
+  const VERSION = '0.5.0';
   const CHAN = 'aether';
   const MAX_PEERS = 24;
   const CHUNK = 12000;
@@ -27,6 +27,7 @@
   const GENESIS_NS = 'æther://genesis';
   const FOUNDER_EMAIL = 'qynlden@tutamail.com';
   const TICKET_KEY = 'aether.ticket';
+  const PENDING_KEY = 'aether.pendingLogin';
   const PLANS = {
     anon: {
       ns: 1,
@@ -1489,7 +1490,7 @@
             (t && t.plan ? t.plan : 'anon') +
             ' allows ' +
             plan.writes +
-            ' writes/day. Pay for more: gate.html#plans'
+            ' writes/day. Pay for more: #/account'
         );
       if ((op === 'set' || op === 'batch') && this.meteredKeys() >= plan.keys)
         throw new Error(
@@ -1497,7 +1498,7 @@
             (t && t.plan ? t.plan : 'anon') +
             ' allows ' +
             plan.keys +
-            ' keys. Pay for more: gate.html#plans'
+            ' keys. Pay for more: #/account'
         );
     }
     async mutate(op, key, value) {
@@ -1976,6 +1977,34 @@
       else localStorage.setItem(TICKET_KEY, JSON.stringify(t));
     } catch {}
   }
+  function loadPending() {
+    try {
+      if (typeof sessionStorage === 'undefined') return null;
+      const p = JSON.parse(sessionStorage.getItem(PENDING_KEY) || 'null');
+      if (!p || (p.at && Date.now() - p.at > 20 * 60 * 1000)) return null;
+      return p;
+    } catch {
+      return null;
+    }
+  }
+  function savePending(p) {
+    try {
+      if (typeof sessionStorage === 'undefined') return;
+      if (!p) sessionStorage.removeItem(PENDING_KEY);
+      else sessionStorage.setItem(PENDING_KEY, JSON.stringify(p));
+    } catch {}
+  }
+  function magicUrl(nonce, eh) {
+    if (typeof location === 'undefined') return '';
+    return (
+      location.origin +
+      '/?otp=' +
+      encodeURIComponent(nonce) +
+      '&eh=' +
+      encodeURIComponent(eh) +
+      '#/in'
+    );
+  }
   function normEmail(e) {
     return String(e || '')
       .trim()
@@ -2036,15 +2065,37 @@
     const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
     const codeHash = await sha256(code);
     await gate.set('~otp/' + nonce, { eh: eh, codeHash: codeHash, exp: Date.now() + 20 * 60 * 1000, at: Date.now() });
-    let origin = '';
-    if (typeof location !== 'undefined')
-      origin = location.origin + location.pathname.replace(/[^/]*$/, '');
-    const url = origin + 'gate.html?otp=' + encodeURIComponent(nonce) + '&eh=' + encodeURIComponent(eh);
+    const url = magicUrl(nonce, eh);
+    const mailto =
+      'mailto:' +
+      email +
+      '?subject=' +
+      encodeURIComponent('Your Æther login (no password)') +
+      '&body=' +
+      encodeURIComponent('Open this to enter Æther:\n\n' + url + '\n\nOr type this code: ' + code + '\n');
     const mailed = await sendMagicMail(email, url, code);
-    return { eh: eh, nonce: nonce, mailed: mailed, url: url, mailto: 'mailto:' + email + '?subject=' + encodeURIComponent('Æther login') + '&body=' + encodeURIComponent('Open: ' + url + '\nCode: ' + code), code: code };
+    const pending = {
+      email: email,
+      eh: eh,
+      nonce: nonce,
+      code: code,
+      url: url,
+      mailto: mailto,
+      mailed: mailed,
+      at: Date.now()
+    };
+    savePending(pending);
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('aether.lastEmail', email);
+    } catch {}
+    return pending;
   }
   async function proveLogin(opts) {
     opts = opts || {};
+    const pending = loadPending() || {};
+    if (!opts.otp) opts.otp = pending.nonce;
+    if (!opts.eh) opts.eh = pending.eh;
+    if (!opts.email) opts.email = pending.email;
     const gate = await openGate();
     const rec = gate.get('~otp/' + opts.otp);
     if (!rec) throw new Error('unknown or spent link');
@@ -2094,6 +2145,7 @@
       at: Date.now()
     };
     saveTicket(ticket);
+    savePending(null);
     if (api.db && api.db.bindAccount) api.db.bindAccount(ticket);
     return ticket;
   }
@@ -2211,7 +2263,7 @@
   }
   async function claimNamespace(ns, ticket) {
     ticket = ticket || loadTicket();
-    if (!ticket) throw new Error('connections need an account — log in at gate.html');
+    if (!ticket) throw new Error('connections need an account — log in at #/in');
     const gate = await openGate();
     if (gate.get('~ban/' + ticket.eh)) throw new Error('banned');
     const nsHash = (await sha256('aether:ns:' + ns)).slice(0, 24);
@@ -2223,7 +2275,7 @@
     }).length;
     const plan = PLANS[ticket.plan] || PLANS.spark;
     if (ticket.role !== 'admin' && !cur && owned >= plan.ns)
-      throw new Error('Æther limit: ' + ticket.plan + ' allows ' + plan.ns + ' namespace(s). Pay: gate.html#plans');
+      throw new Error('Æther limit: ' + ticket.plan + ' allows ' + plan.ns + ' namespace(s). Pay: #/account');
     if (!cur) await gate.set(key, { eh: ticket.eh, ns: ns, actor: gate.actor.id, at: Date.now() });
     return gate.get(key);
   }
@@ -2332,6 +2384,7 @@
       send: sendLogin,
       prove: proveLogin,
       me: loadTicket,
+      pending: loadPending,
       logout: logout,
       refresh: refreshAccount,
       checkout: checkout,
@@ -2374,8 +2427,10 @@
     if (!parsed.ns) return Promise.reject(new Error('Aether.hitch needs a namespace'));
     const o = Object.assign({}, opts || {});
     if (parsed.passphrase && !o.passphrase) o.passphrase = parsed.passphrase;
+    if (!o.ticket) o.ticket = loadTicket();
     api.ready = open(parsed.ns, o).then(function (db) {
       api.db = db;
+      if (o.ticket) db.bindAccount(o.ticket);
       installDefines(db);
       waiters.splice(0).forEach(function (fn) {
         try {

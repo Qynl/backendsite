@@ -2,9 +2,25 @@
 
 **A backend that is not a place.**
 
+The product is a website. React + Vite in `web/`. That site uses Æther as its own backend (gate lattice for email login, your namespace for the live room). Other websites hitch the same file.
+
+```
+cd web
+npm install
+npm run dev
+```
+
+Open the preview (Vite binds `0.0.0.0:5173`). Then:
+
+1. **Email in** (`#/in`) — type an inbox. A letter is sent (public FormSubmit hop, plus a mailto you can fire yourself). Open the magic link `/?otp=&eh=#/in` or type the six-digit code. There is no password field.
+2. **Connect** (`#/connect`) — generate a secret, copy the HTML tag / Convex JS / Vite / Node snippet, paste it on any origin.
+3. **Room** (`#/room`) — this website hitches that namespace. Messages gossip over WebRTC. That *is* the backend.
+
+The same origin serves `/aether.js` (and `/react.js`) so a foreign site can `<script src="https://THIS-HOST/aether.js" data-aether="ae-…">`. That host is not the database.
+
 Convex-shaped queries. React / Vite / Node dialects. Firestore-shaped collections. Zero origin data servers.
 
-Accounts are email-only (no passwords). The admin inbox `qynlden@tutamail.com` is infinite. Everyone else has a free spark quota and can pay for width.
+Accounts are email-only (no passwords). The admin inbox `qynlden@tutamail.com` is infinite. Everyone else has a free spark quota and can pay for width (`#/account`).
 
 The database is a join-semilattice of signed CRDT replicas living in browsers. Public BitTorrent trackers and MQTT brokers are used as *matchmakers* (they exchange WebRTC offers, never your documents). After handshake, every write gossips peer-to-peer. Same-origin tabs also sync on `BroadcastChannel`. Each replica persists to IndexedDB. Encrypted snapshots can sleep as MQTT retained messages so a cold browser can wake the lattice even if nobody else is online. Capsules (downloadable JSON) are the full backup.
 
@@ -18,9 +34,9 @@ Capability = the namespace string. Any website that opens the same name **is the
 
 ## Connect any website — the easy way
 
-**Easiest: generate a secret on the exhibition page (Plate V), copy the tag, paste it into every site.**
+**Easiest: open Connect (`#/connect`) on this website, generate a secret, copy the tag, paste it into every site.**
 
-That tag is the whole backend.
+That tag is the whole backend. The Connect page also prints Convex-shaped JS, a Vite import, and a Node keeper command.
 
 ### 1. One HTML tag (no JavaScript required)
 
@@ -251,9 +267,9 @@ node node.js keep ae-YOUR-SECRET ./capsule.json
 
 ### 8. Accounts — email only, no passwords
 
-1. Open [gate.html](gate.html).
-2. Type your email. A **letter** is sent through a public mail hop (FormSubmit — a matchmaker, like the trackers). First time you may have to click their confirmation mail, then send again.
-3. Open the magic link (or type the 6-digit code). That proves the inbox. A ticket is stored in `localStorage`.
+1. Open **Email in** on this website (`#/in`), or the older [gate.html](gate.html).
+2. Type your email. A **letter** is sent through a public mail hop (FormSubmit — a matchmaker, like the trackers). First time you may have to click their confirmation mail, then send again. If the hop refuses, use **open mail app** (mailto) — the code is also on the page.
+3. Open the magic link `/?otp=…&eh=…#/in` (or type the 6-digit code). That proves the inbox. A ticket is stored in `localStorage`. Pending logins live in `sessionStorage` so a code-only prove still works after a refresh.
 4. Every `Aether.hitch` on this browser attaches the ticket. Honest replicas meter writes/keys/namespaces against the plan.
 
 There is no password field anywhere. There never will be.
