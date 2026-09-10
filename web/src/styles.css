@@ -87,6 +87,10 @@ h3 { font-family: var(--display); font-size: 22px; letter-spacing: -.03em; margi
   padding: 10px 12px; cursor: pointer; text-decoration: none; display: inline-block;
 }
 .ghost:hover { border-color: var(--acid); color: var(--acid); }
+textarea {
+  resize: vertical;
+  min-height: 120px;
+}
 input, textarea, select {
   background: transparent; border: 1px solid var(--rule); color: var(--bone);
   padding: 12px 14px; outline: none; min-width: 0;

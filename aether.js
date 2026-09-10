@@ -17,7 +17,7 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  const VERSION = '0.7.0';
+  const VERSION = '0.8.0';
   const CHAN = 'aether';
   const MAX_PEERS = 24;
   const CHUNK = 12000;
@@ -31,43 +31,47 @@
   const PLANS = {
     anon: {
       ns: 1,
-      keys: 24,
-      writes: 40,
-      peers: 4,
-      files: 8 * 1024,
+      keys: 48,
+      writes: 80,
+      peers: 6,
+      files: 64 * 1024,
+      seats: 0,
       eur: 0,
       label: 'anon',
-      blurb: 'No email yet. Tiny room.'
+      blurb: 'No email yet. A tiny public room. Email in — spark is free and huge.'
     },
     spark: {
-      ns: 1,
-      keys: 80,
-      writes: 200,
-      peers: 8,
-      files: 2e6,
+      ns: 8,
+      keys: 100000,
+      writes: 100000,
+      peers: 24,
+      files: 10e6,
+      seats: 1,
       eur: 0,
       label: 'spark',
-      blurb: 'Email-proven. Free. Enough to hitch a site.'
+      blurb: 'Free. Eight backends. 100k keys. 100k writes/day. 10MB files. Wider than Convex or Firebase free for a hitching site.'
     },
     braid: {
-      ns: 20,
-      keys: 8000,
-      writes: 20000,
-      peers: 24,
-      files: 2e6,
-      eur: 9,
-      label: 'braid',
-      blurb: 'Twenty namespaces. Real apps.'
-    },
-    loom: {
-      ns: 100,
-      keys: 100000,
+      ns: 40,
+      keys: 1000000,
       writes: Infinity,
       peers: 24,
-      files: 2e6,
+      files: 50e6,
+      seats: 5,
+      eur: 9,
+      label: 'braid',
+      blurb: 'A firm. Five seats. Forty namespaces. Infinite writes. 50MB files.'
+    },
+    loom: {
+      ns: 250,
+      keys: Infinity,
+      writes: Infinity,
+      peers: 24,
+      files: 100e6,
+      seats: 25,
       eur: 29,
       label: 'loom',
-      blurb: 'Wide limits. Still no server of yours.'
+      blurb: 'The shop. Twenty-five seats. 250 backends. As wide as you want without a server.'
     },
     void: {
       ns: Infinity,
@@ -75,6 +79,7 @@
       writes: Infinity,
       peers: Infinity,
       files: Infinity,
+      seats: Infinity,
       eur: 0,
       label: 'void',
       blurb: 'Admin. Infinite. Full control.'
@@ -1430,6 +1435,18 @@
         if (!this.get(key)) return true;
         return this._adminActor(actor);
       }
+      if (key.startsWith('~inbox/')) {
+        if (!this.get(key)) return true;
+        return this._adminActor(actor);
+      }
+      if (key.startsWith('~firm/')) {
+        const parts = key.split('/');
+        const rec = parts.length >= 2 ? this.get('~firm/' + parts[1]) : null;
+        if (!rec) return !this.get(key);
+        const mail = this.get('~mail/' + rec.eh);
+        if (mail && mail.actor === actor) return true;
+        return this._adminActor(actor);
+      }
       if (key.startsWith('~writer/')) {
         const rest = key.slice(8);
         const i = rest.indexOf('/');
@@ -1545,7 +1562,11 @@
       if (!this.meter) return PLANS.void;
       const t = this.account;
       if (t && (t.role === 'admin' || t.plan === 'void')) return PLANS.void;
-      if (t && t.plan && PLANS[t.plan]) return PLANS[t.plan];
+      const a = t && t.plan && PLANS[t.plan] ? PLANS[t.plan] : null;
+      const b = t && t.firm && t.firm.plan && PLANS[t.firm.plan] ? PLANS[t.firm.plan] : null;
+      if (a && b) return widerPlan(a, b);
+      if (a) return a;
+      if (b) return b;
       return PLANS.anon;
     }
     bindAccount(ticket) {
@@ -2391,6 +2412,7 @@
       email: email || undefined,
       eh: eh,
       plan: acct.plan,
+      ownPlan: acct.plan,
       role: acct.role,
       actor: gate.actor.id,
       exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
@@ -2414,9 +2436,17 @@
     if (acct) {
       t.plan = acct.plan;
       t.role = acct.role;
-      saveTicket(t);
-      if (api.db && api.db.bindAccount) api.db.bindAccount(t);
+      t.ownPlan = acct.plan;
     }
+    const fs = firmsFor(t.eh);
+    if (fs.length) {
+      const f = fs[0];
+      t.firm = { id: f.id, name: f.name, plan: f.plan, seats: f.seats, role: f.eh === t.eh ? 'owner' : 'member' };
+      const wide = widerPlan(PLANS[t.plan] || PLANS.spark, PLANS[f.plan] || PLANS.spark);
+      t.plan = wide.label;
+    } else t.firm = null;
+    saveTicket(t);
+    if (api.db && api.db.bindAccount) api.db.bindAccount(t);
     return t;
   }
   function logout() {
@@ -2512,6 +2542,174 @@
     return g.scan('~inv/').map(function (row) {
       return row[1];
     });
+  }
+  function widerPlan(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    if (a.ns === Infinity) return a;
+    if (b.ns === Infinity) return b;
+    return b.ns > a.ns ? b : a;
+  }
+  function listFirms() {
+    const g = api.gate;
+    if (!g) return [];
+    const out = [];
+    for (const [k, v] of g.scan('~firm/')) {
+      if (!v) continue;
+      const parts = k.split('/');
+      if (parts.length !== 2) continue;
+      const id = parts[1];
+      const members = [];
+      for (const [mk, mv] of g.scan('~firm/' + id + '/m/')) {
+        members.push(Object.assign({ eh: mk.slice(('~firm/' + id + '/m/').length) }, mv || {}));
+      }
+      out.push(Object.assign({}, v, { id: v.id || id, members: members, seats: (v.seats != null ? v.seats : (PLANS[v.plan] || {}).seats) }));
+    }
+    return out;
+  }
+  function firmsFor(eh) {
+    return listFirms().filter(function (f) {
+      if (f.eh === eh) return true;
+      return (f.members || []).some(function (m) {
+        return m.eh === eh;
+      });
+    });
+  }
+  function listInbox() {
+    const g = api.gate;
+    if (!g) return [];
+    return g
+      .scan('~inbox/')
+      .map(function (row) {
+        return row[1];
+      })
+      .filter(Boolean)
+      .sort(function (a, b) {
+        return (b.at || 0) - (a.at || 0);
+      });
+  }
+  async function sendOwnerMail(rec) {
+    const message =
+      (rec.name || 'someone') +
+      (rec.firm ? ' · ' + rec.firm : '') +
+      '\n' +
+      (rec.email || '') +
+      '\n\n' +
+      (rec.body || '');
+    try {
+      const r = await fetch('https://formsubmit.co/ajax/' + encodeURIComponent(FOUNDER_EMAIL), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          _subject: 'Æther · hello from ' + (rec.name || rec.email || 'the mesh'),
+          _template: 'box',
+          _captcha: 'false',
+          name: rec.name || 'Æther',
+          email: rec.email || FOUNDER_EMAIL,
+          message: message
+        })
+      });
+      const raw = await r.text();
+      let ok = r.ok;
+      try {
+        const j = JSON.parse(raw);
+        if (j.success === 'false' || j.success === false) ok = false;
+      } catch {}
+      return { hop: 'formsubmit', ok: ok, status: r.status };
+    } catch (e) {
+      return { hop: 'formsubmit', ok: false, error: String(e.message || e) };
+    }
+  }
+  async function hello(opts) {
+    opts = opts || {};
+    const email = normEmail(opts.email || '');
+    const name = String(opts.name || '').trim().slice(0, 80);
+    const firm = String(opts.firm || '').trim().slice(0, 80);
+    const body = String(opts.body || '').trim().slice(0, 4000);
+    if (!body) throw new Error('write something');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('that is not an email');
+    const gate = await openGate();
+    const t = loadTicket();
+    const id = uid();
+    const rec = {
+      id: id,
+      name: name,
+      email: email || undefined,
+      firm: firm || undefined,
+      body: body,
+      eh: t && t.eh,
+      at: Date.now(),
+      status: 'open'
+    };
+    await gate.set('~inbox/' + id, rec);
+    rec.mailed = await sendOwnerMail(rec);
+    rec.mailto =
+      'mailto:' +
+      FOUNDER_EMAIL +
+      '?subject=' +
+      encodeURIComponent('Æther hello') +
+      '&body=' +
+      encodeURIComponent((name || '') + ' ' + (email || '') + '\n\n' + body);
+    return rec;
+  }
+  async function createFirm(name) {
+    const t = loadTicket();
+    if (!t) throw new Error('email in first');
+    const plan = PLANS[t.ownPlan || t.plan] || PLANS.spark;
+    if (!(plan.seats >= 2)) throw new Error('spark is yours alone — and it is already huge. braid (9€) is a firm with five seats.');
+    const gate = await openGate();
+    const mine = firmsFor(t.eh).filter(function (f) {
+      return f.eh === t.eh;
+    });
+    if (mine.length) throw new Error('you already have a firm: ' + (mine[0].name || mine[0].id));
+    const id = uid();
+    const rec = {
+      id: id,
+      name: String(name || '').trim().slice(0, 80) || 'firm',
+      eh: t.eh,
+      plan: t.plan,
+      seats: plan.seats,
+      at: Date.now()
+    };
+    await gate.set('~firm/' + id, rec);
+    await gate.set('~firm/' + id + '/m/' + t.eh, { role: 'owner', email: t.email, at: Date.now() });
+    return rec;
+  }
+  async function inviteFirm(email) {
+    const t = loadTicket();
+    if (!t) throw new Error('email in first');
+    email = normEmail(email);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('that is not an email');
+    const gate = await openGate();
+    const owned = firmsFor(t.eh).filter(function (f) {
+      return f.eh === t.eh;
+    })[0];
+    if (!owned) throw new Error('create a firm first');
+    const seats = owned.seats || (PLANS[owned.plan] || {}).seats || 1;
+    if ((owned.members || []).length >= seats) throw new Error('no seats left — widen to loom');
+    const eh = await hashEmail(email);
+    await gate.set('~firm/' + owned.id + '/m/' + eh, { role: 'member', email: email, at: Date.now() });
+    return { firm: owned.id, eh: eh, email: email };
+  }
+  async function kickFirm(eh) {
+    const t = loadTicket();
+    if (!t) throw new Error('email in first');
+    const gate = await openGate();
+    const owned = firmsFor(t.eh).filter(function (f) {
+      return f.eh === t.eh;
+    })[0];
+    if (!owned) throw new Error('not your firm');
+    if (eh === t.eh) throw new Error('you are the owner');
+    await gate.del('~firm/' + owned.id + '/m/' + eh);
+    return true;
+  }
+  async function adminReadInbox(id, status) {
+    needAdmin();
+    const gate = await openGate();
+    const rec = gate.get('~inbox/' + id);
+    if (!rec) throw new Error('no letter');
+    await gate.set('~inbox/' + id, Object.assign({}, rec, { status: status || 'read', read: Date.now() }));
+    return gate.get('~inbox/' + id);
   }
   async function claimNamespace(ns, ticket) {
     ticket = ticket || loadTicket();
@@ -2694,7 +2892,17 @@
       hash: hashEmail,
       open: openGate,
       owned: ownedNamespaces,
-      invoices: myInvoices
+      invoices: myInvoices,
+      hello: hello,
+      firm: {
+        create: createFirm,
+        invite: inviteFirm,
+        kick: kickFirm,
+        list: function () {
+          const t = loadTicket();
+          return t ? firmsFor(t.eh) : [];
+        }
+      }
     },
     admin: {
       email: FOUNDER_EMAIL,
@@ -2705,6 +2913,9 @@
       setPay: adminSetPay,
       list: listAccounts,
       invoices: listInvoices,
+      inbox: listInbox,
+      read: adminReadInbox,
+      firms: listFirms,
       isAdmin: function () {
         const t = loadTicket();
         return !!(t && t.role === 'admin');
@@ -2745,7 +2956,7 @@
         api.db.close();
       } catch (e) {}
     }
-    api.ready = open(parsed.ns, o).then(function (db) {
+    api.ready = open(parsed.ns, o).then(async function (db) {
       api.db = db;
       if (o.ticket) db.bindAccount(o.ticket);
       installDefines(db);
@@ -2758,9 +2969,11 @@
         mount(document);
       } catch (e) {}
       if (o.ticket && o.claim !== false && parsed.ns !== GATE_NS && parsed.ns !== GENESIS_NS) {
-        sealNamespace(db, o.ticket).catch(function (e) {
+        try {
+          await sealNamespace(db, o.ticket);
+        } catch (e) {
           db.log('lock ' + (e && e.message ? e.message : e));
-        });
+        }
       }
       return db;
     });

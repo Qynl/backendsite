@@ -15,13 +15,14 @@ Open the preview (Vite binds `0.0.0.0:5173`). Then:
 1. **Email in once** (`#/in`) — type an inbox. A letter is sent (public FormSubmit hop, plus a mailto you can fire yourself). Open the magic link `/?otp=&eh=#/in` or type the six-digit code. There is no password field. That proof lives in this browser. We do not ask again on every write.
 2. **Connect** (`#/connect`) — generate a secret. Copy the HTML tag, Convex JS, React hooks, Vite, Node keeper, or download a whole HTML room. Hitch **locks** the lattice to that inbox and registers this connection as a writer. Nobody else can write.
 3. **Room** (`#/room?ns=…`) — this website hitches that namespace. Messages, presence, pulse, capsules. That *is* the backend. A new device emails in once, then it writes too.
-4. **Docs** (`#/docs`) — the dialect on the same origin that serves `/aether.js`.
+4. **Hello** (`#/hello`) — write the owner on the site. It lands on the gate lattice (`~inbox/`) and hops a letter to `qynlden@tutamail.com`. The admin void lists every letter.
+5. **Docs** (`#/docs`) — the dialect on the same origin that serves `/aether.js`.
 
 The same origin serves `/aether.js` (and `/react.js`) so a foreign site can `<script src="https://THIS-HOST/aether.js" data-aether="ae-…">`. That host is not the database.
 
 Convex-shaped queries. React / Vite / Node dialects. Firestore-shaped collections. Zero origin data servers.
 
-Accounts are email-only (no passwords). The admin inbox `qynlden@tutamail.com` is infinite. Everyone else has a free spark quota and can pay for width (`#/account`).
+Accounts are email-only (no passwords). Spark (free, after one letter) is already wider than typical Convex/Firebase free tiers — eight namespaces, 100k keys, 100k writes/day. Braid (9€) is a firm with five seats. Loom (29€) is the shop. Nobody should feel they cannot ship without paying. The admin inbox `qynlden@tutamail.com` is infinite. Write the owner on the site (`#/hello`); it shows in the admin void.
 
 The database is a join-semilattice of signed CRDT replicas living in browsers. Public BitTorrent trackers and MQTT brokers are used as *matchmakers* (they exchange WebRTC offers, never your documents). After handshake, every write gossips peer-to-peer. Same-origin tabs also sync on `BroadcastChannel`. Each replica persists to IndexedDB. Encrypted snapshots can sleep as MQTT retained messages so a cold browser can wake the lattice even if nobody else is online. Capsules (downloadable JSON) are the full backup.
 
@@ -275,19 +276,29 @@ node node.js keep ae-YOUR-SECRET ./capsule.json
 
 There is no password field anywhere. There never will be.
 
-Admin: **`qynlden@tutamail.com`**. That address is compiled into the protocol. After it proves itself via email it is `role: admin`, plan `void` — infinite keys, writes, namespaces, peers — and the only identity that may confirm payments, change plans, ban, and publish Stripe/PayPal/crypto links.
+Admin: **`qynlden@tutamail.com`**. That address is compiled into the protocol. After it proves itself via email it is `role: admin`, plan `void` — infinite keys, writes, namespaces, peers, seats — and the only identity that may confirm payments, change plans, ban, publish Stripe/PayPal/crypto links, read the site inbox, and see every firm.
 
-### 9. Pay for wider limits
+### 9. Pay for wider limits — spark is already huge
 
-| plan | € / mo | namespaces | keys | writes / day |
-|---|---|---|---|---|
-| anon | 0 | 1 | 24 | 40 |
-| spark | 0 | 1 | 80 | 200 |
-| braid | 9 | 20 | 8 000 | 20 000 |
-| loom | 29 | 100 | 100 000 | ∞ |
-| void (admin) | — | ∞ | ∞ | ∞ |
+| plan | € / mo | namespaces | keys | writes / day | seats |
+|---|---|---|---|---|---|
+| anon | 0 | 1 | 48 | 80 | — |
+| spark | 0 | 8 | 100 000 | 100 000 | 1 |
+| braid | 9 | 40 | 1 000 000 | ∞ | 5 |
+| loom | 29 | 250 | ∞ | ∞ | 25 |
+| void (admin) | — | ∞ | ∞ | ∞ | ∞ |
 
-Checkout at the gate creates an invoice on the **gate lattice** (`æther://gate`). Pay by email to `qynlden@tutamail.com` quoting the invoice id, or via whatever link admin published. Click **I paid**. Admin confirms on [admin.html](admin.html). Then every hitching replica that refreshes the ticket sees the new plan.
+Spark is free after one letter. Eight backends, 100k keys, 100k writes/day, 10 MB files — wider than typical Convex/Firebase free tiers. You can ship a product on spark. Braid is what you buy when a company shows up: five seats, forty namespaces, infinite writes. Loom is the shop.
+
+Checkout at the gate (`#/account`) creates an invoice on the **gate lattice** (`æther://gate`). Pay by email to `qynlden@tutamail.com` quoting the invoice id, or via whatever link admin published. Click **I paid**. Admin confirms on `#/admin` (or [admin.html](admin.html)). Then every hitching replica that refreshes the ticket sees the new plan.
+
+### 9b. Hello — contact the owner on the website
+
+`Aether.account.hello({ name, email, firm, body })` writes `~inbox/{id}` on the gate (anyone may create a letter; only admin may mark it). The same call hops FormSubmit to `qynlden@tutamail.com` and returns a `mailto:` if the hop misses. Admin `#/admin` lists the inbox and can mark letters done. No origin mail server.
+
+### 9c. Firms — seats, members inherit width
+
+Braid and loom have seats. The owner emails in, pays, then `Aether.account.firm.create('acme')`. Invite is an email: `Aether.account.firm.invite('you@acme')`. That person emails in on their own browser; `refresh` attaches `ticket.firm` and **widens their plan** to the firm's (`widerPlan`). Kick drops the seat. Admin sees every firm. Spark is one seat — yours alone — and it is already huge.
 
 Connections without a ticket are `anon`. Connections with a ticket **are** the account — the namespace lease on the gate records `eh` (email hash). That is how limits follow the inbox across origins.
 

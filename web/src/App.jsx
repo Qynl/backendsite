@@ -141,6 +141,7 @@ function Top() {
         <Link to="room">room</Link>
         <Link to="in">email in</Link>
         <Link to="docs">docs</Link>
+        <Link to="hello">hello</Link>
         <Link to="account">{ticket ? ticket.plan : 'account'}</Link>
         {ticket && ticket.role === 'admin' && <Link to="admin">admin</Link>}
         {ticket && <span className="chip">{ticket.plan}</span>}
@@ -360,23 +361,41 @@ function Home() {
         </span>
       </div>
 
-      <h3>Widen later. Start free.</h3>
-      <div className="grid">
-        {['anon', 'spark', 'braid', 'loom'].map((p) => {
+      <h3>Spark is free and already enough. Pay when the firm shows up.</h3>
+      <p className="muted">
+        Convex free is ~0.5 GB and a million calls. Firebase spark is 20k writes/day. Æther spark is eight backends,
+        100k keys, 100k writes/day, 10 MB files — no card, no region. Braid is a firm. Loom is the shop.
+      </p>
+      <div className="grid" style={{ marginTop: 16 }}>
+        {['spark', 'braid', 'loom'].map((p) => {
           const pl = Aether.plans[p];
           return (
             <div className="card" key={p}>
               <div className="lbl">{pl.label}</div>
-              <p className="price">{pl.eur ? pl.eur + '€' : '0€'}</p>
+              <p className="price">{pl.eur ? pl.eur + '€' : 'free'}</p>
               <p className="muted">{pl.blurb}</p>
               <p className="muted">
                 {pl.ns === Infinity ? '∞' : pl.ns} ns · {pl.keys === Infinity ? '∞' : pl.keys} keys ·{' '}
                 {pl.writes === Infinity ? '∞' : pl.writes} writes/day
+                {pl.seats ? ' · ' + (pl.seats === Infinity ? '∞' : pl.seats) + ' seats' : ''}
               </p>
+              {p === 'spark' ? (
+                <button className="hit" onClick={() => go('in')}>
+                  take spark
+                </button>
+              ) : (
+                <button className="hit ghost" onClick={() => go('account')}>
+                  {p}
+                </button>
+              )}
             </div>
           );
         })}
       </div>
+      <p className="muted" style={{ marginTop: 18 }}>
+        A question for the owner? <a href="#/hello">Write on the site</a>. It lands in the void and in{' '}
+        <code>{Aether.founder}</code>.
+      </p>
     </div>
   );
 }
@@ -891,11 +910,79 @@ function Room() {
   );
 }
 
+function Hello() {
+  const { ticket } = useSdk();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState(() => (ticket && ticket.email) || '');
+  const [firm, setFirm] = useState((ticket && ticket.firm && ticket.firm.name) || '');
+  const [body, setBody] = useState('');
+  const [msg, setMsg] = useState('');
+  const [kind, setKind] = useState('');
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="page">
+      <p className="kicker">write the owner · no ticket required</p>
+      <h2>Say it on the site. He sees it.</h2>
+      <p className="lede">
+        Lands on the gate lattice and in <code>{Aether.founder}</code>. The admin void lists every letter. No origin
+        inbox server.
+      </p>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setMsg('');
+          try {
+            const r = await Aether.account.hello({ name, email, firm, body });
+            setKind('ok');
+            setMsg(
+              r.mailed && r.mailed.ok
+                ? 'Sent. The void has it, and a letter hopped to the owner.'
+                : 'On the lattice. If the mail hop missed, use the mailto.'
+            );
+            setBody('');
+          } catch (err) {
+            setKind('err');
+            setMsg(String(err.message || err));
+          }
+          setBusy(false);
+        }}
+      >
+        <div className="grid-2" style={{ marginBottom: 12 }}>
+          <input placeholder="your name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input type="email" placeholder="you@somewhere" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input placeholder="firm (optional)" value={firm} onChange={(e) => setFirm(e.target.value)} />
+        </div>
+        <textarea
+          required
+          rows={6}
+          placeholder="what should the owner know?"
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          style={{ width: '100%', marginBottom: 12 }}
+        />
+        <div className="row">
+          <button className="hit" disabled={busy}>
+            {busy ? 'sending…' : 'send to the void'}
+          </button>
+          <a className="ghost" href={'mailto:' + Aether.founder}>
+            or mailto
+          </a>
+        </div>
+      </form>
+      {msg && <p className={kind}>{msg}</p>}
+    </div>
+  );
+}
+
 function Account() {
   const { ticket, setTicket, db, refreshTicket } = useSdk();
   const [inv, setInv] = useState(null);
   const [mine, setMine] = useState([]);
   const [owned, setOwned] = useState([]);
+  const [firms, setFirms] = useState([]);
+  const [firmName, setFirmName] = useState('');
+  const [seat, setSeat] = useState('');
   const [msg, setMsg] = useState('');
   const plan = (ticket && Aether.plans[ticket.plan]) || Aether.plans.anon;
   const usedKeys = db && db.meteredKeys ? db.meteredKeys() : 0;
@@ -908,6 +995,7 @@ function Account() {
         await Aether.account.open();
         if (Aether.account.owned) setOwned(await Aether.account.owned());
         if (Aether.account.invoices) setMine(Aether.account.invoices());
+        if (Aether.account.firm) setFirms(Aether.account.firm.list());
       } catch {}
     })();
   }, [ticket]);
@@ -992,6 +1080,100 @@ function Account() {
           </table>
         </>
       )}
+      <h3>Firm</h3>
+      {ticket.firm ? (
+        <p className="muted">
+          {ticket.firm.name} · {ticket.firm.role} · members inherit the wider plan
+        </p>
+      ) : ticket.plan === 'spark' ? (
+        <p className="muted">
+          Spark is yours alone — already wider than other free plans. Braid (9€) is five seats for a company.
+        </p>
+      ) : (
+        <p className="muted">Name a firm. Invite seats. They hitch with their own email; they inherit your width.</p>
+      )}
+      {firms.map((f) => (
+        <div className="card" key={f.id} style={{ marginBottom: 12 }}>
+          <div className="lbl">
+            {f.name} · {f.plan} · {(f.members || []).length}/{f.seats || '—'} seats
+          </div>
+          <table>
+            <tbody>
+              {(f.members || []).map((m) => (
+                <tr key={m.eh}>
+                  <td className="k">{m.email || m.eh}</td>
+                  <td>{m.role}</td>
+                  <td>
+                    {((ticket.firm && ticket.firm.role === 'owner') || f.eh === ticket.eh) && m.eh !== ticket.eh && (
+                      <button
+                        className="ghost"
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            await Aether.account.firm.kick(m.eh);
+                            setFirms(Aether.account.firm.list());
+                            await refreshTicket();
+                          } catch (ex) {
+                            setMsg(String(ex.message || ex));
+                          }
+                        }}
+                      >
+                        kick
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {((ticket.firm && ticket.firm.role === 'owner') || f.eh === ticket.eh) && (
+            <form
+              className="row"
+              style={{ marginTop: 10 }}
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setMsg('');
+                try {
+                  await Aether.account.firm.invite(seat);
+                  setSeat('');
+                  setFirms(Aether.account.firm.list());
+                  setMsg('seat offered — they email in on their browser, then hitch.');
+                } catch (ex) {
+                  setMsg(String(ex.message || ex));
+                }
+              }}
+            >
+              <input
+                type="email"
+                required
+                placeholder="teammate@firm"
+                value={seat}
+                onChange={(e) => setSeat(e.target.value)}
+              />
+              <button className="hit">invite</button>
+            </form>
+          )}
+        </div>
+      ))}
+      {!firms.length && (Aether.plans[ticket.ownPlan || ticket.plan] || {}).seats >= 2 && (
+        <form
+          className="row"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              await Aether.account.firm.create(firmName || 'firm');
+              await refreshTicket();
+              setFirms(Aether.account.firm.list());
+            } catch (ex) {
+              setMsg(String(ex.message || ex));
+            }
+          }}
+        >
+          <input placeholder="firm name" value={firmName} onChange={(e) => setFirmName(e.target.value)} />
+          <button className="hit">create firm</button>
+        </form>
+      )}
+
       <h2 style={{ fontSize: 28, marginTop: 28 }}>Widen the room</h2>
       <div className="grid">
         {['braid', 'loom'].map((p) => (
@@ -999,6 +1181,7 @@ function Account() {
             <div className="lbl">{p}</div>
             <p className="price">{Aether.plans[p].eur}€</p>
             <p className="muted">{Aether.plans[p].blurb}</p>
+            <p className="muted">{Aether.plans[p].seats} seats</p>
             <button className="hit" onClick={() => buy(p)}>
               pay {p}
             </button>
@@ -1092,6 +1275,8 @@ function Admin() {
   const { ticket } = useSdk();
   const [rows, setRows] = useState([]);
   const [inv, setInv] = useState([]);
+  const [letters, setLetters] = useState([]);
+  const [firms, setFirms] = useState([]);
   const [eh, setEh] = useState('');
   const [plan, setPlan] = useState('spark');
   const [pay, setPay] = useState({ stripe: '', paypal: '', crypto: '' });
@@ -1101,6 +1286,8 @@ function Admin() {
     await Aether.account.open();
     setRows(Aether.admin.list());
     setInv(Aether.admin.invoices());
+    if (Aether.admin.inbox) setLetters(Aether.admin.inbox());
+    if (Aether.admin.firms) setFirms(Aether.admin.firms());
     const cfg = (Aether.gate && Aether.gate.get('~cfg/pay')) || {};
     setPay({ stripe: cfg.stripe || '', paypal: cfg.paypal || '', crypto: cfg.crypto || '' });
   }
@@ -1128,7 +1315,60 @@ function Admin() {
     <div className="page">
       <p className="kicker">admin · infinite</p>
       <h2>The rest obey.</h2>
-      <div className="card">
+      <h3>Inbox · contact the owner</h3>
+      {!(letters && letters.length) && <p className="muted">empty. the site hello form writes here.</p>}
+      {letters.map((l) => (
+        <div className="card" key={l.id} style={{ marginBottom: 10 }}>
+          <div className="lbl">
+            {l.status || 'open'} · {l.name || 'anon'} · {l.email || l.eh || '—'}
+            {l.firm ? ' · ' + l.firm : ''}
+          </div>
+          <p>{l.body}</p>
+          <div className="row">
+            {l.email && (
+              <a className="ghost" href={'mailto:' + l.email + '?subject=' + encodeURIComponent('re: Æther')}>
+                reply
+              </a>
+            )}
+            {l.status !== 'done' && (
+              <button
+                className="ghost"
+                type="button"
+                onClick={async () => {
+                  await Aether.admin.read(l.id, 'done');
+                  load();
+                }}
+              >
+                mark done
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      <h3>Firms</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>name</th>
+            <th>plan</th>
+            <th>owner eh</th>
+            <th>seats</th>
+          </tr>
+        </thead>
+        <tbody>
+          {firms.map((f) => (
+            <tr key={f.id}>
+              <td>{f.name}</td>
+              <td>{f.plan}</td>
+              <td className="k">{f.eh}</td>
+              <td>
+                {(f.members || []).length}/{f.seats || '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="card" style={{ marginTop: 18 }}>
         <div className="lbl">payment rails</div>
         <div className="row">
           <input placeholder="Stripe link" value={pay.stripe} onChange={(e) => setPay({ ...pay, stripe: e.target.value })} />
@@ -1291,8 +1531,14 @@ await Aether.hitch(ns)
         Network tab: GET aether.js, wss trackers, wss mqtt, STUN, optional formsubmit. No fetch to your server. WebRTC
         is chrome://webrtc-internals.
       </p>
+      <h3>7. Hello the owner. Firms inherit width.</h3>
+      <pre className="snip">{`await Aether.account.hello({ name, email, body: 'we want a keeper' })
+await Aether.account.firm.create('acme')
+await Aether.account.firm.invite('you@acme')
+// member emails in, hitch, refresh → ticket.plan widens to the firm`}</pre>
       <p className="muted">
-        Full notes live in the repo README. Capability = the namespace string.
+        Spark is free and already wide. Braid is five seats. Letters land in the admin void. Full notes live in the repo
+        README. Capability = the namespace string.
       </p>
     </div>
   );
@@ -1313,6 +1559,8 @@ export default function App() {
       <Admin />
     ) : route === 'docs' ? (
       <Docs />
+    ) : route === 'hello' ? (
+      <Hello />
     ) : (
       <Home />
     );
