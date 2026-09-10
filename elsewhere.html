@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Annals of Nowhere — correspondence</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    :root { --paper:#f6f0e4; --ink:#2a241c; --rule:#cbbfa8; --accent:#8b1e2d; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--paper); color: var(--ink);
+      font-family: "Libre Baskerville", Palatino, serif;
+      font-size: 18px; line-height: 1.6;
+    }
+    header { text-align: center; padding: 56px 24px 24px; border-bottom: 2px solid var(--ink); }
+    header small { display: block; letter-spacing: .28em; text-transform: uppercase; font-family: "IBM Plex Mono", monospace; font-size: 11px; margin-bottom: 12px; }
+    h1 { font-size: clamp(32px, 6vw, 54px); margin: 0; font-weight: 700; }
+    .issue { font-style: italic; margin-top: 8px; }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 24px 120px; }
+    .note { font-size: 15px; color: #5c5346; border-left: 2px solid var(--accent); padding: 4px 0 4px 16px; margin: 0 0 36px; }
+    .letter { border-bottom: 1px solid var(--rule); padding: 22px 0; }
+    .letter .from { font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #6a6154; }
+    .letter p { margin: 8px 0 0; font-size: 20px; }
+    form { display: flex; gap: 8px; margin-top: 36px; }
+    input { flex: 1; font: inherit; padding: 10px 12px; border: 1px solid var(--ink); background: transparent; }
+    button { font: inherit; background: var(--ink); color: var(--paper); border: 0; padding: 10px 16px; cursor: pointer; }
+    footer { margin-top: 64px; font-size: 14px; color: #6a6154; }
+    a { color: var(--accent); }
+    .pulse { font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <small>Vol. I · No. ∞ · printed from a lattice</small>
+    <h1>The Annals of Nowhere</h1>
+    <div class="issue">A journal with no office, no press, no publisher.</div>
+  </header>
+  <main>
+    <p class="note">
+      This is a different website. Different type, different colour, different URL.
+      It includes one script and opens the namespace <em>æther://genesis</em>.
+      The correspondence below is the same whisper log as the void you just left.
+      The drum at the bottom is the same counter. There is still no server.
+    </p>
+    <p class="pulse">The pulse, observed from this origin: <strong id="pulse">—</strong></p>
+    <div id="letters"></div>
+    <form id="f">
+      <input id="q" maxlength="240" placeholder="A letter to nowhere…" />
+      <button type="submit">Print it</button>
+    </form>
+    <footer>
+      Return to <a href="index.html">Æther</a>.
+      Hitch: <code>Aether.open('æther://genesis')</code>.
+    </footer>
+  </main>
+  <script src="aether.js"></script>
+  <script>
+    Aether.open('æther://genesis').then((db) => {
+      const paint = () => {
+        document.getElementById('pulse').textContent = db.count('pulse');
+        const rows = db.tail('whispers', 60).slice().reverse();
+        document.getElementById('letters').innerHTML = rows.map((r) => {
+          const v = r.value || {};
+          const t = new Date(v.at || Date.now()).toUTCString();
+          const text = String(v.text || '').replace(/[<>]/g, '');
+          return `<article class="letter"><div class="from">Correspondence · ${t} · ${(r.actor||'').slice(0,8)}</div><p>${text}</p></article>`;
+        }).join('');
+      };
+      paint();
+      db.onStatus((t) => { if (t === 'change' || t === 'sync' || t === 'open') paint(); });
+      document.getElementById('f').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const t = document.getElementById('q').value.trim();
+        if (!t) return;
+        document.getElementById('q').value = '';
+        db.append('whispers', { text: t, at: Date.now() });
+      });
+    });
+  </script>
+</body>
+</html>

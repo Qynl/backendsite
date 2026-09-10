@@ -1,0 +1,22 @@
+{
+  "name": "aether",
+  "version": "0.8.0",
+  "description": "A backend that is not a place. Convex-shaped queries on a browser lattice. No origin data server.",
+  "main": "aether.js",
+  "exports": {
+    ".": "./aether.js",
+    "./react": "./react.js",
+    "./node": "./node.js"
+  },
+  "bin": {
+    "aether": "./node.js"
+  },
+  "peerDependencies": {
+    "react": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "license": "Unlicense",
+  "keywords": ["crdt", "p2p", "convex", "firebase", "webrtc", "unhosted"]
+}

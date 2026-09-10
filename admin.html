@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Æther — admin void</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="site.css" />
+  <style>
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px var(--pad) 90px; }
+    .denied { font-size: 22px; color: var(--copper); }
+    table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+    th { text-align: left; color: var(--copper); font-weight: 500; letter-spacing: .12em; text-transform: uppercase; font-size: 10px; padding: 8px 8px 8px 0; border-bottom: 1px solid var(--rule); }
+    td { padding: 8px 8px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+    td.k { color: var(--acid); }
+    .row2 { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 22px; }
+    .row2 input { min-width: 180px; }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html"><em>Æther</em></a>
+    <nav>
+      <a href="gate.html">gate</a>
+      <a href="admin.html">admin</a>
+    </nav>
+  </header>
+  <main class="wrap">
+    <p class="plate-num">void</p>
+    <h2>Infinite, and the rest obey.</h2>
+    <p id="st" class="sub">checking ticket…</p>
+    <div id="app" hidden>
+      <div class="card">
+        <div class="lbl">payment rails (shown on the gate)</div>
+        <div class="row2">
+          <input id="stripe" placeholder="Stripe payment link" />
+          <input id="paypal" placeholder="PayPal.me / link" />
+          <input id="crypto" placeholder="crypto address" />
+          <button class="hit ghost" id="save-pay" type="button">save</button>
+        </div>
+      </div>
+      <h3 style="margin-top:36px">accounts</h3>
+      <div class="row2">
+        <input id="eh" placeholder="email hash" />
+        <select id="plan">
+          <option>spark</option>
+          <option>braid</option>
+          <option>loom</option>
+          <option>void</option>
+          <option>anon</option>
+        </select>
+        <button class="hit" id="set-plan" type="button">set plan</button>
+        <input id="reason" placeholder="ban reason" />
+        <button class="copy" id="ban" type="button">ban</button>
+        <button class="copy" id="unban" type="button">unban</button>
+      </div>
+      <table>
+        <thead><tr><th>eh</th><th>plan</th><th>role</th><th>banned</th><th>actor</th></tr></thead>
+        <tbody id="accts"></tbody>
+      </table>
+      <h3 style="margin-top:36px">invoices</h3>
+      <table>
+        <thead><tr><th>id</th><th>plan</th><th>€</th><th>status</th><th></th></tr></thead>
+        <tbody id="inv"></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="aether.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    function rows() {
+      $('accts').innerHTML = Aether.admin.list().map((a) =>
+        '<tr><td class="k">' + a.eh + '</td><td>' + a.plan + '</td><td>' + a.role + '</td><td>' +
+        (a.banned ? 'yes ' + (a.reason || '') : '') + '</td><td>' + (a.actor || '') + '</td></tr>'
+      ).join('') || '<tr><td colspan="5">none yet</td></tr>';
+      $('inv').innerHTML = Aether.admin.invoices().map((i) => {
+        if (!i) return '';
+        const btn = i.status !== 'paid' ? '<button class="copy" data-ok="' + i.id + '">confirm pay</button>' : '';
+        return '<tr><td class="k">' + i.id + '</td><td>' + i.plan + '</td><td>' + i.eur + '</td><td>' + i.status + '</td><td>' + btn + '</td></tr>';
+      }).join('') || '<tr><td colspan="5">none</td></tr>';
+      document.querySelectorAll('[data-ok]').forEach((b) => {
+        b.onclick = async () => {
+          await Aether.admin.confirm(b.getAttribute('data-ok'));
+          rows();
+        };
+      });
+    }
+    (async () => {
+      const t = Aether.account.me();
+      if (!t || t.role !== 'admin') {
+        $('st').innerHTML = 'This is not your void. Log in at the <a href="gate.html">gate</a> if that is you.';
+        $('st').className = 'denied';
+        return;
+      }
+      $('st').textContent = 'admin · void · infinite keys, writes, namespaces, peers.';
+      $('app').hidden = false;
+      await Aether.account.open();
+      await Aether.account.refresh().catch(() => {});
+      const pay = (Aether.gate && Aether.gate.get('~cfg/pay')) || {};
+      $('stripe').value = pay.stripe || '';
+      $('paypal').value = pay.paypal || '';
+      $('crypto').value = pay.crypto || '';
+      rows();
+      Aether.gate.watch('~', rows);
+    })();
+    $('save-pay').onclick = async () => {
+      await Aether.admin.setPay({ stripe: $('stripe').value.trim(), paypal: $('paypal').value.trim(), crypto: $('crypto').value.trim() });
+    };
+    $('set-plan').onclick = async () => {
+      await Aether.admin.setPlan($('eh').value.trim(), $('plan').value);
+      rows();
+    };
+    $('ban').onclick = async () => {
+      await Aether.admin.ban($('eh').value.trim(), $('reason').value.trim());
+      rows();
+    };
+    $('unban').onclick = async () => {
+      await Aether.admin.unban($('eh').value.trim());
+      rows();
+    };
+  </script>
+</body>
+</html>

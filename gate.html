@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Æther — gate (email only)</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="site.css" />
+  <style>
+    .gate { max-width: 920px; margin: 0 auto; padding: 28px var(--pad) 80px; }
+    .who { font-family: var(--mono); font-size: 12px; color: var(--fog); margin: 0 0 28px; }
+    .who b { color: var(--acid); }
+    .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 28px 0; }
+    .plan { border: 1px solid var(--rule); padding: 22px; background: #0c0e0a; }
+    .plan.voidish { border-color: var(--copper); }
+    .plan .price { font-family: var(--display); font-size: 42px; letter-spacing: -.04em; margin: 8px 0; }
+    .plan .price span { font-size: 16px; color: var(--fog); }
+    .plan ul { padding-left: 18px; color: var(--bone-dim); font-size: 15px; }
+    .note { color: var(--fog); font-size: 15px; max-width: 62ch; }
+    .err { color: #e07a62; font-family: var(--mono); font-size: 13px; }
+    .ok { color: var(--acid); font-family: var(--mono); font-size: 13px; }
+    @media (max-width: 800px) { .plans { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html"><em>Æther</em></a>
+    <nav>
+      <a href="index.html">exhibition</a>
+      <a href="gate.html">account</a>
+      <a href="admin.html">admin</a>
+    </nav>
+  </header>
+  <main class="gate">
+    <p class="plate-num">the gate · no passwords</p>
+    <h2>Your email is the key.<br />Nothing else exists.</h2>
+    <p class="sub">A letter is sent. You open it. That is the account. The mail hop is a matchmaker, like the trackers — it never holds the lattice.</p>
+
+    <p class="who" id="who">not signed in · hitching still works as <b>anon</b> with a tiny quota</p>
+
+    <div class="card" id="login-box">
+      <div class="lbl">ask for a letter</div>
+      <form id="login" class="row">
+        <input id="email" type="text" inputmode="email" placeholder="you@somewhere" required />
+        <button class="hit" type="submit">send login</button>
+      </form>
+      <p class="note">First letter from the hop may be a confirmation (“activate formsubmit”). Click that, then send again. After that, every login is a magic link. No password will ever be stored because none is created.</p>
+      <form id="codeform" class="row" style="margin-top:14px">
+        <input id="otp" type="text" placeholder="nonce from the link" />
+        <input id="code" type="text" placeholder="6-digit code" maxlength="6" />
+        <button class="hit ghost" type="submit">enter</button>
+      </form>
+      <p id="msg" class="note"></p>
+    </div>
+
+    <div id="session" hidden>
+      <button class="copy" id="out" type="button">log out</button>
+      <a class="elsewhere-link" href="admin.html" id="admin-link" hidden>open admin void</a>
+    </div>
+
+    <h3 id="plans">Plans</h3>
+    <p class="note">Honest replicas refuse writes past the plan. Pay widens the room. The database still is not a place.</p>
+    <div class="plans">
+      <article class="plan">
+        <div class="lbl">spark · free</div>
+        <div class="price">0<span>€</span></div>
+        <p>Email-proven. 1 namespace, 80 keys, 200 writes/day.</p>
+        <ul>
+          <li>Convex-shaped queries</li>
+          <li>React / Vite / Node / HTML</li>
+        </ul>
+      </article>
+      <article class="plan">
+        <div class="lbl">braid</div>
+        <div class="price">9<span>€ / mo</span></div>
+        <p>20 namespaces, 8 000 keys, 20 000 writes/day.</p>
+        <button class="hit" data-buy="braid" type="button">pay braid</button>
+      </article>
+      <article class="plan">
+        <div class="lbl">loom</div>
+        <div class="price">29<span>€ / mo</span></div>
+        <p>100 namespaces, 100 000 keys, unlimited writes.</p>
+        <button class="hit" data-buy="loom" type="button">pay loom</button>
+      </article>
+    </div>
+    <div id="invoice" class="card" hidden></div>
+    <p class="note">Pay via whatever Stripe / PayPal / crypto link the admin published, quoting the invoice id. Click “I paid”. Admin confirms — then the lattice widens. No payment processor is the database.</p>
+  </main>
+  <script src="aether.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const msg = (t, cls) => { $('msg').className = cls || 'note'; $('msg').textContent = t; };
+    function paint() {
+      const t = Aether.account.me();
+      if (!t) {
+        $('who').innerHTML = 'not signed in · hitching still works as <b>anon</b> with a tiny quota';
+        $('session').hidden = true;
+        return;
+      }
+      $('who').innerHTML = 'plan <b>' + t.plan + '</b> · role <b>' + (t.role || 'user') + '</b> · eh ' + t.eh.slice(0, 12) + (t.email ? ' · ' + t.email : '');
+      $('session').hidden = false;
+      $('admin-link').hidden = t.role !== 'admin';
+    }
+    paint();
+    $('login').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg('opening the gate lattice…');
+      try {
+        const r = await Aether.account.send($('email').value);
+        $('otp').value = r.nonce;
+        const extra = r.mailed && r.mailed.ok
+          ? ' Letter handed to the mail hop. Check the inbox (and spam). First time: confirm the hop, then send again.'
+          : ' Hop did not accept it. Use your mail app:';
+        $('msg').innerHTML = extra + (r.mailto ? ' <a href="' + r.mailto + '">open mailto</a>' : '') + '<br/>code <b>' + r.code + '</b> (also in the letter)';
+        $('msg').className = 'ok';
+      } catch (err) {
+        msg(String(err.message || err), 'err');
+      }
+    });
+    $('codeform').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const t = await Aether.account.prove({
+          otp: $('otp').value.trim(),
+          email: $('email').value.trim(),
+          eh: new URLSearchParams(location.search).get('eh') || undefined,
+          code: $('code').value.trim()
+        });
+        msg('in. plan ' + t.plan + (t.role === 'admin' ? ' · you are the void' : ''), 'ok');
+        paint();
+      } catch (err) {
+        msg(String(err.message || err), 'err');
+      }
+    });
+    $('out').addEventListener('click', () => { Aether.account.logout(); paint(); });
+    document.querySelectorAll('[data-buy]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        try {
+          const r = await Aether.account.checkout(b.getAttribute('data-buy'));
+          const pay = r.pay || {};
+          const links = [
+            pay.stripe ? '<a href="' + pay.stripe + '">Stripe</a>' : '',
+            pay.paypal ? '<a href="' + pay.paypal + '">PayPal</a>' : '',
+            pay.crypto ? '<span>crypto ' + pay.crypto + '</span>' : ''
+          ].filter(Boolean).join(' · ');
+          $('invoice').hidden = false;
+          $('invoice').innerHTML =
+            '<div class="lbl">invoice ' + r.invoice.id + '</div>' +
+            '<p>Pay <b>' + r.invoice.eur + '€</b> for <b>' + r.invoice.plan + '</b>. Quote invoice id <code>' + r.invoice.id + '</code>.</p>' +
+            (links ? '<p>' + links + '</p>' : '') +
+            '<button class="hit" id="paid">I paid</button>';
+          $('paid').onclick = async () => {
+            await Aether.account.markPaid(r.invoice.id);
+            $('invoice').innerHTML += '<p class="ok">marked pending. admin confirms, then your plan widens.</p>';
+          };
+        } catch (err) {
+          msg(String(err.message || err), 'err');
+        }
+      });
+    });
+    (async () => {
+      const q = new URLSearchParams(location.search);
+      if (q.get('otp')) {
+        $('otp').value = q.get('otp');
+        try {
+          const t = await Aether.account.prove({ otp: q.get('otp'), eh: q.get('eh') });
+          msg('link accepted. plan ' + t.plan, 'ok');
+          paint();
+        } catch (err) {
+          msg('link: ' + (err.message || err) + ' — enter the email you used and the code.', 'err');
+        }
+      }
+    })();
+  </script>
+</body>
+</html>
