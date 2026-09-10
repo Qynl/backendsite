@@ -34,7 +34,7 @@
   <main class="gate">
     <p class="plate-num">the gate · no passwords</p>
     <h2>Your email is the key.<br />Nothing else exists.</h2>
-    <p class="sub">A letter is sent. You open it. That is the account. The mail hop is a matchmaker, like the trackers — it never holds the lattice. Admin is <code>qynlden@tutamail.com</code> and is infinite.</p>
+    <p class="sub">A letter is sent. You open it. That is the account. The mail hop is a matchmaker, like the trackers — it never holds the lattice.</p>
 
     <p class="who" id="who">not signed in · hitching still works as <b>anon</b> with a tiny quota</p>
 
@@ -84,7 +84,7 @@
       </article>
     </div>
     <div id="invoice" class="card" hidden></div>
-    <p class="note">Pay by email to <code>qynlden@tutamail.com</code> quoting the invoice id, or whatever Stripe / PayPal / crypto link the admin published. Click “I paid”. Admin confirms — then the lattice widens. No payment processor is the database.</p>
+    <p class="note">Pay via whatever Stripe / PayPal / crypto link the admin published, quoting the invoice id. Click “I paid”. Admin confirms — then the lattice widens. No payment processor is the database.</p>
   </main>
   <script src="aether.js"></script>
   <script>
@@ -146,7 +146,7 @@
           $('invoice').hidden = false;
           $('invoice').innerHTML =
             '<div class="lbl">invoice ' + r.invoice.id + '</div>' +
-            '<p>Pay <b>' + r.invoice.eur + '€</b> for <b>' + r.invoice.plan + '</b> to <code>' + r.mail + '</code> with this id in the subject.</p>' +
+            '<p>Pay <b>' + r.invoice.eur + '€</b> for <b>' + r.invoice.plan + '</b>. Quote invoice id <code>' + r.invoice.id + '</code>.</p>' +
             (links ? '<p>' + links + '</p>' : '') +
             '<button class="hit" id="paid">I paid</button>';
           $('paid').onclick = async () => {

@@ -393,8 +393,7 @@ function Home() {
         })}
       </div>
       <p className="muted" style={{ marginTop: 18 }}>
-        A question for the owner? <a href="#/hello">Write on the site</a>. It lands in the void and in{' '}
-        <code>{Aether.founder}</code>.
+        A question for the owner? <a href="#/hello">Write on the site</a>. Leave your mail. It shows in the void.
       </p>
     </div>
   );
@@ -644,7 +643,7 @@ function Gate() {
       <h2>Your email is the account.</h2>
       <p className="lede">
         We send a link and a six-digit code. Open either. That is the only time we ask. After that this browser is the
-        owner of whatever it hitches. Admin is <code>{Aether.founder}</code> and is infinite.
+        owner of whatever it hitches.
       </p>
       <form onSubmit={send} className="row" style={{ marginBottom: 18 }}>
         <input
@@ -924,8 +923,8 @@ function Hello() {
       <p className="kicker">write the owner · no ticket required</p>
       <h2>Say it on the site. He sees it.</h2>
       <p className="lede">
-        Lands on the gate lattice and in <code>{Aether.founder}</code>. The admin void lists every letter. No origin
-        inbox server.
+        Leave your mail. The letter sits on the lattice. The owner writes you back from the void — no hop, no public
+        inbox.
       </p>
       <form
         onSubmit={async (e) => {
@@ -933,13 +932,9 @@ function Hello() {
           setBusy(true);
           setMsg('');
           try {
-            const r = await Aether.account.hello({ name, email, firm, body });
+            await Aether.account.hello({ name, email, firm, body });
             setKind('ok');
-            setMsg(
-              r.mailed && r.mailed.ok
-                ? 'Sent. The void has it, and a letter hopped to the owner.'
-                : 'On the lattice. If the mail hop missed, use the mailto.'
-            );
+            setMsg('On the lattice. The owner will write you.');
             setBody('');
           } catch (err) {
             setKind('err');
@@ -950,7 +945,13 @@ function Hello() {
       >
         <div className="grid-2" style={{ marginBottom: 12 }}>
           <input placeholder="your name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input type="email" placeholder="you@somewhere" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input
+            type="email"
+            required
+            placeholder="you@somewhere"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
           <input placeholder="firm (optional)" value={firm} onChange={(e) => setFirm(e.target.value)} />
         </div>
         <textarea
@@ -963,11 +964,8 @@ function Hello() {
         />
         <div className="row">
           <button className="hit" disabled={busy}>
-            {busy ? 'sending…' : 'send to the void'}
+            {busy ? 'sending…' : 'leave it in the void'}
           </button>
-          <a className="ghost" href={'mailto:' + Aether.founder}>
-            or mailto
-          </a>
         </div>
       </form>
       {msg && <p className={kind}>{msg}</p>}
@@ -1192,8 +1190,7 @@ function Account() {
         <div className="card" style={{ marginTop: 16 }}>
           <div className="lbl">invoice {inv.invoice.id}</div>
           <p>
-            Pay <b>{inv.invoice.eur}€</b> for <b>{inv.invoice.plan}</b> to <code>{inv.mail}</code> with this id in the
-            subject.
+            Pay <b>{inv.invoice.eur}€</b> for <b>{inv.invoice.plan}</b>. Quote invoice id <code>{inv.invoice.id}</code>.
             {inv.pay && inv.pay.stripe && (
               <>
                 {' '}
@@ -1301,9 +1298,7 @@ function Admin() {
       <div className="page">
         <p className="kicker">void</p>
         <h2>This is not your void.</h2>
-        <p className="lede">
-          Log in with <code>{Aether.founder}</code>. That inbox is infinite.
-        </p>
+        <p className="lede">This void has an owner. Email in if that is you.</p>
         <button className="hit" onClick={() => go('in')}>
           email in
         </button>
@@ -1522,8 +1517,7 @@ await Aether.hitch(ns)
 // later writes do not re-check email. other actors are dropped.`}</pre>
       <p className="muted">
         One letter per browser. The ticket lives in <code>localStorage</code>. Hitch seals the namespace. Strangers with
-        the name can read if they know it; they cannot write. Admin <code>{Aether.founder}</code> is infinite. Spark is
-        free. Braid 9€ / loom 29€.
+        the name can read if they know it; they cannot write. Spark is free. Braid 9€ / loom 29€.
       </p>
 
       <h3>6. Prove there is no origin API</h3>

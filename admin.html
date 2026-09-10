@@ -26,7 +26,7 @@
     </nav>
   </header>
   <main class="wrap">
-    <p class="plate-num">void · qynlden@tutamail.com</p>
+    <p class="plate-num">void</p>
     <h2>Infinite, and the rest obey.</h2>
     <p id="st" class="sub">checking ticket…</p>
     <div id="app" hidden>
@@ -88,7 +88,7 @@
     (async () => {
       const t = Aether.account.me();
       if (!t || t.role !== 'admin') {
-        $('st').innerHTML = 'This is not your void. Log in at the <a href="gate.html">gate</a> with <code>qynlden@tutamail.com</code>. That email is infinite.';
+        $('st').innerHTML = 'This is not your void. Log in at the <a href="gate.html">gate</a> if that is you.';
         $('st').className = 'denied';
         return;
       }

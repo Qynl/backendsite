@@ -25,7 +25,7 @@
   const KEEP_MAX = 180000;
   const GATE_NS = 'æther://gate';
   const GENESIS_NS = 'æther://genesis';
-  const FOUNDER_EMAIL = 'qynlden@tutamail.com';
+  const FOUNDER_EH = '07e49f0e878b9f0a0909a68339c9e146';
   const TICKET_KEY = 'aether.ticket';
   const PENDING_KEY = 'aether.pendingLogin';
   const PLANS = {
@@ -2244,8 +2244,8 @@
   async function hashEmail(e) {
     return (await sha256('aether:mail:' + normEmail(e))).slice(0, 32);
   }
-  async function founderEh() {
-    return hashEmail(FOUNDER_EMAIL);
+  function founderEh() {
+    return FOUNDER_EH;
   }
   let gateReady = null;
   function openGate(opts) {
@@ -2401,7 +2401,7 @@
       await gate.set('~acct/' + eh, acct);
     }
     if (isFounder && !gate.get('~cfg/admin')) {
-      await gate.set('~cfg/admin', { eh: eh, actor: gate.actor.id, at: Date.now(), email: FOUNDER_EMAIL });
+      await gate.set('~cfg/admin', { eh: eh, actor: gate.actor.id, at: Date.now() });
     }
     if (gate.get('~ban/' + eh)) throw new Error('this account is banned');
     try {
@@ -2462,7 +2462,7 @@
     const inv = { id: id, eh: t.eh, plan: plan, eur: PLANS[plan].eur, status: 'open', at: Date.now() };
     await gate.set('~inv/' + id, inv);
     const pay = gate.get('~cfg/pay') || {};
-    return { invoice: inv, pay: pay, mail: FOUNDER_EMAIL };
+    return { invoice: inv, pay: pay };
   }
   async function markPaid(id) {
     const t = loadTicket();
@@ -2588,38 +2588,6 @@
         return (b.at || 0) - (a.at || 0);
       });
   }
-  async function sendOwnerMail(rec) {
-    const message =
-      (rec.name || 'someone') +
-      (rec.firm ? ' · ' + rec.firm : '') +
-      '\n' +
-      (rec.email || '') +
-      '\n\n' +
-      (rec.body || '');
-    try {
-      const r = await fetch('https://formsubmit.co/ajax/' + encodeURIComponent(FOUNDER_EMAIL), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          _subject: 'Æther · hello from ' + (rec.name || rec.email || 'the mesh'),
-          _template: 'box',
-          _captcha: 'false',
-          name: rec.name || 'Æther',
-          email: rec.email || FOUNDER_EMAIL,
-          message: message
-        })
-      });
-      const raw = await r.text();
-      let ok = r.ok;
-      try {
-        const j = JSON.parse(raw);
-        if (j.success === 'false' || j.success === false) ok = false;
-      } catch {}
-      return { hop: 'formsubmit', ok: ok, status: r.status };
-    } catch (e) {
-      return { hop: 'formsubmit', ok: false, error: String(e.message || e) };
-    }
-  }
   async function hello(opts) {
     opts = opts || {};
     const email = normEmail(opts.email || '');
@@ -2627,14 +2595,14 @@
     const firm = String(opts.firm || '').trim().slice(0, 80);
     const body = String(opts.body || '').trim().slice(0, 4000);
     if (!body) throw new Error('write something');
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('that is not an email');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('leave an email so the owner can write back');
     const gate = await openGate();
     const t = loadTicket();
     const id = uid();
     const rec = {
       id: id,
       name: name,
-      email: email || undefined,
+      email: email,
       firm: firm || undefined,
       body: body,
       eh: t && t.eh,
@@ -2642,14 +2610,6 @@
       status: 'open'
     };
     await gate.set('~inbox/' + id, rec);
-    rec.mailed = await sendOwnerMail(rec);
-    rec.mailto =
-      'mailto:' +
-      FOUNDER_EMAIL +
-      '?subject=' +
-      encodeURIComponent('Æther hello') +
-      '&body=' +
-      encodeURIComponent((name || '') + ' ' + (email || '') + '\n\n' + body);
     return rec;
   }
   async function createFirm(name) {
@@ -2905,7 +2865,6 @@
       }
     },
     admin: {
-      email: FOUNDER_EMAIL,
       confirm: adminConfirm,
       setPlan: adminSetPlan,
       ban: adminBan,
@@ -2922,7 +2881,6 @@
       }
     },
     plans: PLANS,
-    founder: FOUNDER_EMAIL,
     theorem,
     version: VERSION,
     Lattice,
